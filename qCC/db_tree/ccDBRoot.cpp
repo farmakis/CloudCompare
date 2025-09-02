@@ -32,6 +32,7 @@
 #include <QSettings>
 #include <QStandardItemModel>
 #include <QTreeView>
+#include <qcheckbox.h>
 
 // qCC_db
 #include <cc2DLabel.h>
@@ -56,6 +57,7 @@
 
 // common
 #include <ccPickOneElementDlg.h>
+#include <ccOptions.h>
 
 // local
 #include "ccPersistentSettings.h"
@@ -540,6 +542,35 @@ void ccDBRoot::deleteSelectedEntities()
 		return;
 	}
 	unsigned selCount = static_cast<unsigned>(selectedIndexes.size());
+
+	// confirmation
+	ccOptions options = ccOptions::Instance();
+
+	if (options.confirmDelete)
+	{
+		QMessageBox confDial(MainWindow::TheInstance());
+		confDial.setIcon(QMessageBox::Question);
+		confDial.setWindowTitle(tr("Delete Selected Entities"));
+		confDial.setText(tr("Are you sure ?"));
+		confDial.setStandardButtons(QMessageBox::Yes | QMessageBox::No);
+		confDial.setDefaultButton(QMessageBox::No);
+
+		// add "Don't ask again"
+		QCheckBox* dontAskAgain = new QCheckBox(tr("Don't ask me again"), &confDial);
+		confDial.setCheckBox(dontAskAgain);
+		int ret = confDial.exec();
+
+		if (dontAskAgain->isChecked())
+		{
+			options.confirmDelete = false;
+			ccOptions::Set(options);
+		}
+
+		if (ret != QMessageBox::Yes)
+		{
+			return;
+		}
+	}
 
 	hidePropertiesView();
 	bool verticesWarningIssued = false;
