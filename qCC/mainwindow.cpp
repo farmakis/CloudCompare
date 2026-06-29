@@ -68,6 +68,7 @@
 #include "ccEntityAction.h"
 #include "ccHistogramWindow.h"
 #include "ccInnerRect2DFinder.h"
+#include <ReferenceCloud.h>
 
 // common
 #include <ccPickingHub.h>
@@ -124,6 +125,7 @@
 #include "ccUnrollDlg.h"
 #include "ccVolumeCalcTool.h"
 #include "ccWaveformDialog.h"
+#include "ccCutPursuitDlg.h"
 
 // CCPluginAPI
 #include <ccInfoDlg.h>
@@ -156,6 +158,10 @@
 
 #include <iostream>
 #include <random>
+
+#include "grid_graph.hpp"
+#include "omp_num_threads.hpp"
+#include "cp_d0_dist.hpp"
 
 // global static pointer (as there should only be one instance of MainWindow!)
 static MainWindow* s_instance = nullptr;
@@ -675,6 +681,7 @@ void MainWindow::connectActions()
 	connect(m_UI->actionComputeStatParams2, &QAction::triggered, this, &MainWindow::doActionComputeStatParams); // duplicated action --> we can't use the same otherwise we get an ugly console warning on Linux :(
 	connect(m_UI->actionStatisticalTest, &QAction::triggered, this, &MainWindow::doActionStatisticalTest);
 	//"Tools > Segmentation" menu
+	connect(m_UI->actionCutPursuit, &QAction::triggered, this, &MainWindow::doActionCutPursuit);
 	connect(m_UI->actionLabelConnectedComponents, &QAction::triggered, this, &MainWindow::doActionLabelConnectedComponents);
 	connect(m_UI->actionKMeans, &QAction::triggered, this, &MainWindow::doActionKMeans);
 	connect(m_UI->actionFrontPropagation, &QAction::triggered, this, &MainWindow::doActionFrontPropagation);
@@ -4492,6 +4499,216 @@ void MainWindow::createComponentsClouds(ccGenericPointCloud*                clou
 			ccConsole::Warning(tr("[CreateComponentsClouds] Original cloud has been automatically hidden"));
 		}
 	}
+}
+
+void MainWindow::doActionCutPursuit()
+{
+	// keep only the point clouds!
+	std::vector<ccGenericPointCloud*> clouds;
+	{
+		for (ccHObject* entity : getSelectedEntities())
+		{
+			if (entity->isKindOf(CC_TYPES::POINT_CLOUD))
+				clouds.push_back(ccHObjectCaster::ToGenericPointCloud(entity));
+		}
+	}
+
+	size_t count = clouds.size();
+	if (count == 0)
+		return;
+
+	ccCutPursuitDlg dlg(this);
+	if (count == 1)
+		dlg.octreeLevelSpinBox->setCloud(clouds.front());
+
+	if (!dlg.exec())
+		return;
+
+	static int s_octreeLevel      		= dlg.getOctreeLevel();
+	static unsigned s_knn				= dlg.getKNN();
+	static unsigned s_knnRadius			= dlg.getKNNRadius();
+	static double s_regularization   	= dlg.getRegularization();
+	static double s_spatialWeight    	= dlg.getSpatialWeight();
+	static unsigned s_cutoff           	= dlg.getCutoff();
+
+	ccProgressDialog pDlg(false, this);
+	pDlg.setAutoClose(false);
+
+	// we unselect all entities as we are going to automatically select the created components
+	//(otherwise the user won't perceive the change!)
+	if (m_ccRoot)
+	{
+		m_ccRoot->unselectAllEntities();
+	}
+
+	for (ccGenericPointCloud* cloud : clouds)
+	{
+		if (cloud && cloud->isA(CC_TYPES::POINT_CLOUD))
+		{
+			ccPointCloud* pc = static_cast<ccPointCloud*>(cloud);
+
+			ccOctree::Shared theOctree = cloud->getOctree();
+			if (!theOctree)
+			{
+				ccProgressDialog pOctreeDlg(true, this);
+				theOctree = cloud->computeOctree(&pOctreeDlg);
+				if (!theOctree)
+				{
+					ccConsole::Error(tr("Couldn't compute octree for cloud '%1'!").arg(cloud->getName()));
+					break;
+				}
+			}
+
+			// we create/activate Cut Pursuit's label scalar field
+			int sfIdx = pc->getScalarFieldIndexByName(CC_CUT_PURSUIT_LABEL_NAME);
+			if (sfIdx < 0)
+			{
+				sfIdx = pc->addScalarField(CC_CUT_PURSUIT_LABEL_NAME);
+			}
+			if (sfIdx < 0)
+			{
+				ccConsole::Error(tr("Couldn't allocate a new scalar field for computing Cut Pursuit labels! Try to free some memory ..."));
+				break;
+			}
+			pc->setCurrentScalarField(sfIdx);
+
+			// call cut pursuit
+			unsigned char bestLevel = theOctree->findBestLevelForAGivenNeighbourhoodSizeExtraction(s_knnRadius);
+			CCCoreLib::ReferenceCloud neighbors(pc);
+
+			std::vector<uint32_t> edges;
+			edges.reserve(pc->size() * s_knn * 2); // 2*e
+
+			for (unsigned i = 0; i < pc->size(); ++i)
+			{
+				neighbors.clear(false);
+				double maxSquareDist = 0.0;
+				int finalNeighbourhoodSize = 0;
+				const CCVector3* queryPoint = pc->getPoint(i);
+				if (theOctree->findPointNeighbourhood(
+					queryPoint,              // Position we are searching around
+					&neighbors,              // Where the resulting neighbor indices will be stored
+					s_knn,                   // Max number of neighbors (k)
+					bestLevel,               // The optimized octree level we calculated
+					maxSquareDist,           // Output: The squared distance to the furthest neighbor found
+					s_knnRadius,             // Max search radius (r)
+					&finalNeighbourhoodSize) // Output: Internal octree box search size metric (optional)
+				)
+				{
+					unsigned source = i;
+                    for (unsigned n = 0; n < neighbors.size(); ++n)
+                    {
+                        unsigned target = neighbors.getPointGlobalIndex(n);
+
+                        // ignore self-loops
+                        if (source == target)
+                            continue;
+
+                        edges.push_back(source); // 2*e
+                        edges.push_back(target); // 2*e + 1
+                    }
+				}
+				else
+				{
+					ccLog::Warning(tr("[Cut Pursuit] Failed to find neighbors for node #%1").arg(i));
+				}
+			}
+
+			typedef float real_t;      	// For data and weights
+			typedef uint32_t index_t;   // For vertex and edge indices
+			typedef uint16_t comp_t;    // For component indices
+
+			// parallel cut pursuit params
+			size_t D = 3 + pc->getNumberOfScalarFields();
+			uint32_t N = pc->size();
+			uint32_t E = edges.size() / 2;
+			real_t* Y = new real_t[N * D];
+			std::vector<uint32_t> first_edge(N + 1);
+            std::vector<uint32_t> reindex(E);
+			std::vector<real_t> node_size(N, 1.0f);
+			std::vector<real_t> coor_weights(D, 1.0f);
+			real_t cp_dif_tol = 1e-2f;
+			int cp_it_max = 15;
+			int K = 2;
+			int split_iter_num = 2;
+			real_t split_damp_ratio = 0.7f;
+			int kmpp_init_num = 3;
+			int kmpp_iter_num = 3;
+			int verbose = 10;
+			int max_num_threads = omp_get_max_threads();
+			index_t max_split_size = N;
+			bool balance_parallel_split = true;
+			bool compute_Time = true;
+			bool compute_List = true;
+			bool compute_Graph = true;
+
+			// populate (column-major) Y with point coordinates and scalar field values
+			for (uint32_t i = 0; i < N; ++i)
+			{
+				const CCVector3* P = pc->getPoint(i);
+				Y[0 * N + i] = static_cast<real_t>(P->x);
+				Y[1 * N + i] = static_cast<real_t>(P->y);
+				Y[2 * N + i] = static_cast<real_t>(P->z);
+
+				for (unsigned j = 0; j < pc->getNumberOfScalarFields(); ++j)
+				{
+					const ccScalarField* sf = pc->getScalarField(j);
+					if (sf)
+					{
+						Y[(3 + j) * N + i] = static_cast<real_t>(sf->getValue(i));
+					}
+					else
+					{
+						Y[(3 + j) * N + i] = static_cast<real_t>(0);
+					}
+				}
+			}
+
+			// compute CSR representation of the graph
+			edge_list_to_forward_star<uint32_t, uint32_t>(
+				N,
+				E,
+				edges.data(),
+				first_edge.data(),
+				reindex.data()
+			);
+
+			ccLog::Warning(tr("[Cut Pursuit] Built CSR graph for cloud '%1'").arg(cloud->getName()));
+
+			std::function<void(int)> progressCallBack(30);
+
+			//  cut-pursuit with preconditioned forward-Douglas-Rachford
+			Cp_d0_dist<real_t, index_t, comp_t>* cp =
+				new Cp_d0_dist<real_t, index_t, comp_t>
+					(N, E, first_edge.data(), reindex.data(), Y.data(), D);
+
+			cp->set_loss(D, Y, vert_weights, coor_weights);
+			cp->set_edge_weights(edge_weights.data(), s_regularization);
+			cp->set_cp_param(cp_dif_tol, cp_it_max, verbose);
+			cp->set_split_param(max_split_size, K, split_iter_num, split_damp_ratio,
+				kmpp_init_num, kmpp_iter_num);
+			cp->set_min_comp_weight(s_cutoff);
+			cp->set_parallel_param(max_num_threads, balance_parallel_split);
+
+			comp_t rV = 1;
+			cp->set_components(rV, nullptr);
+
+			if (cp->cut_pursuit(true, progressCallBack)<0)
+			{
+				delete cp;
+				return false;
+			}
+
+			// Get components assignment
+			const comp_t* comp_assign;
+			const index_t* first_vertex;
+			const index_t* comp_list;
+			rV = cp->get_components(&comp_assign, &first_vertex, &comp_list);
+		}
+	}
+
+	refreshAll();
+	updateUI();
 }
 
 void MainWindow::doActionLabelConnectedComponents()
@@ -11706,6 +11923,7 @@ void MainWindow::enableUIItems(dbTreeSelectionInfo& selInfo)
 	m_UI->actionSetSFsAsNormal->setEnabled(exactlyOneCloud || exactlyOneMesh);
 	m_UI->actionShowWaveDialog->setEnabled(exactlyOneCloud);
 	m_UI->actionCompressFWFData->setEnabled(atLeastOneCloud);
+	m_UI->actionCutPursuit->setEnabled(atLeastOneCloud);
 
 	m_UI->actionKMeans->setEnabled(/*TODO: exactlyOneEntity && exactlyOneSF*/ false);
 	m_UI->actionFrontPropagation->setEnabled(/*TODO: exactlyOneEntity && exactlyOneSF*/ false);
@@ -12280,6 +12498,7 @@ void MainWindow::populateActionList()
 	m_actions.push_back(m_UI->actionStatisticalTest);
 	m_actions.push_back(m_UI->actionSamplePointsOnMesh);
 	m_actions.push_back(m_UI->actionLabelConnectedComponents);
+	m_actions.push_back(m_UI->actionCutPursuit);
 	m_actions.push_back(m_UI->actionSegment);
 	m_actions.push_back(m_UI->actionTranslateRotate);
 	m_actions.push_back(m_UI->actionShowHistogram);
