@@ -3,7 +3,7 @@
 #include <cstdlib>
 #include <limits>
 #include <cstdint> // for instantiation
-#include "maxflow.hpp"
+#include "maxflow.h"
 
 /* special constants for parent arcs */
 #define TERMINAL terminal
@@ -442,5 +442,5 @@ TPL void MXFL::maxflow()
     nodeptr_block = nullptr; 
 }
 
-template class Maxflow<uint32_t, float>;
-template class Maxflow<uint32_t, double>;
+template class Maxflow<int32_t, float>;
+template class Maxflow<int32_t, double>;

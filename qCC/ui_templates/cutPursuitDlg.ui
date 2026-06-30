@@ -25,35 +25,6 @@
      <item row="0" column="0">
       <widget class="QLabel" name="label">
        <property name="toolTip">
-        <string>Grid subdivision level: the greater, the finest</string>
-       </property>
-       <property name="text">
-        <string>Octree Level</string>
-       </property>
-      </widget>
-     </item>
-     <item row="0" column="1">
-      <widget class="ccOctreeSpinBox" name="octreeLevelSpinBox">
-       <property name="minimumSize">
-        <size>
-         <width>0</width>
-         <height>25</height>
-        </size>
-       </property>
-       <property name="minimum">
-        <number>1</number>
-       </property>
-       <property name="maximum">
-        <number>10</number>
-       </property>
-       <property name="value">
-        <number>8</number>
-       </property>
-      </widget>
-     </item>
-     <item row="1" column="0">
-      <widget class="QLabel" name="label_2">
-       <property name="toolTip">
         <string>Max number of nearest neighbors search</string>
        </property>
        <property name="text">
@@ -61,8 +32,8 @@
        </property>
       </widget>
      </item>
-     <item row="1" column="1">
-      <widget class="QDoubleSpinBox" name="knnSpinBox">
+     <item row="0" column="1">
+      <widget class="QSpinBox" name="knnSpinBox">
        <property name="minimumSize">
         <size>
          <width>0</width>
@@ -83,8 +54,8 @@
        </property>
       </widget>
      </item>
-     <item row="2" column="0">
-      <widget class="QLabel" name="label_3">
+     <item row="1" column="0">
+      <widget class="QLabel" name="label_2">
        <property name="toolTip">
         <string>Max search distance</string>
        </property>
@@ -93,7 +64,7 @@
        </property>
       </widget>
      </item>
-     <item row="2" column="1">
+     <item row="1" column="1">
       <widget class="QDoubleSpinBox" name="knnRadiusSpinBox">
        <property name="minimumSize">
         <size>
@@ -115,8 +86,8 @@
        </property>
       </widget>
      </item>
-     <item row="3" column="0">
-      <widget class="QLabel" name="label_4">
+     <item row="2" column="0">
+      <widget class="QLabel" name="label_3">
        <property name="toolTip">
         <string>Regularization</string>
        </property>
@@ -125,13 +96,16 @@
        </property>
       </widget>
      </item>
-     <item row="3" column="1">
+     <item row="2" column="1">
       <widget class="QDoubleSpinBox" name="regularizationSpinBox">
        <property name="minimumSize">
         <size>
          <width>0</width>
          <height>25</height>
         </size>
+       </property>
+       <property name="decimals">
+        <number>4</number>
        </property>
        <property name="minimum">
         <double>0</double>
@@ -147,8 +121,8 @@
        </property>
       </widget>
      </item>
-     <item row="4" column="0">
-      <widget class="QLabel" name="label_5">
+     <item row="3" column="0">
+      <widget class="QLabel" name="label_4">
        <property name="toolTip">
         <string>Spatial influence in loss</string>
        </property>
@@ -157,7 +131,7 @@
        </property>
       </widget>
      </item>
-     <item row="4" column="1">
+     <item row="3" column="1">
       <widget class="QDoubleSpinBox" name="spatialWeightSpinBox">
        <property name="minimumSize">
         <size>
@@ -165,22 +139,25 @@
          <height>25</height>
         </size>
        </property>
+       <property name="decimals">
+        <number>5</number>
+       </property>
        <property name="minimum">
-        <double>1e-05</double>
+        <double>0.0</double>
        </property>
        <property name="maximum">
-        <double>1</double>
+        <double>1.0</double>
        </property>
        <property name="singleStep">
-        <double>0.001</double>
+        <double>0.0001</double>
        </property>
        <property name="value">
         <double>0.01</double>
        </property>
       </widget>
      </item>
-     <item row="5" column="0">
-      <widget class="QLabel" name="label_6">
+     <item row="4" column="0">
+      <widget class="QLabel" name="label_5">
        <property name="toolTip">
         <string>Points cutoff</string>
        </property>
@@ -189,7 +166,7 @@
        </property>
       </widget>
      </item>
-     <item row="5" column="1">
+     <item row="4" column="1">
       <widget class="QSpinBox" name="cutoffSpinBox">
        <property name="minimumSize">
         <size>

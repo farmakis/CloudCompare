@@ -2,8 +2,8 @@
  * Hugo Raguet 2019
  *===========================================================================*/
 #include <cstdint>
-#include "grid_graph.hpp"
-#include "omp_num_threads.hpp"
+#include "grid_graph.h"
+#include "omp_num_threads.h"
 
 template <typename vertex_t, typename edge_t>
 void edge_list_to_forward_star(vertex_t V, size_t E, const vertex_t* edges,
@@ -36,6 +36,4 @@ void edge_list_to_forward_star(vertex_t V, size_t E, const vertex_t* edges,
     template void edge_list_to_forward_star<vertex_t, edge_t> \
         (vertex_t, size_t, const vertex_t*, edge_t*, edge_t*);
 
-INSTANCE(uint16_t, uint16_t)
-INSTANCE(uint32_t, uint32_t)
-INSTANCE(uint64_t, uint64_t)
+INSTANCE(int32_t, int32_t)

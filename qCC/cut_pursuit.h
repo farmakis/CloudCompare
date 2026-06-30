@@ -25,9 +25,9 @@
 #include <cstdlib> // for size_t, malloc, exit
 #include <chrono>
 #include <limits>
-#include <functional>
 #include <iostream>
-#include "maxflow.hpp"
+#include "omp_num_threads.h"
+#include "maxflow.h"
 
 /* real_t is the real numeric type, used for objective functional computation
  * and thus for edge weights and flow graph capacities;
@@ -88,13 +88,13 @@ public:
         int split_iter_num = 1, real_t split_damp_ratio = 1.0,
         int split_values_init_num = 1, int split_values_iter_num = 1);
 
-    //void set_parallel_param(int max_num_threads,
-    //    bool balance_parallel_split = true);
-    ///* overload for default max_num_threads parameter */
-    //void set_parallel_param(bool balance_parallel_split)
-    //{
-    //    set_parallel_param(omp_get_max_threads(), balance_parallel_split);
-    //}
+    void set_parallel_param(int max_num_threads,
+        bool balance_parallel_split = true);
+    /* overload for default max_num_threads parameter */
+    void set_parallel_param(bool balance_parallel_split)
+    {
+        set_parallel_param(omp_get_max_threads(), balance_parallel_split);
+    }
 
     /* the 'get' methods takes pointers to pointers as arguments; a null means
      * that the user is not interested by the corresponding pointer; NOTA:
@@ -121,7 +121,7 @@ public:
     void set_reduced_values(value_t* rX);
 
     /* solve the main problem */
-    int cut_pursuit(bool init, std::function<void(int)> progressCallback);
+    int cut_pursuit(bool init = true);
 
 protected:
     /**  main graph  **/
@@ -368,17 +368,17 @@ protected:
         return ptr;
     }
 
-    ///**  control parallelization  **/
-    //int max_num_threads; // maximum number of parallel threads 
-    ///* take into account max_num_threads attribute */
-    //int compute_num_threads(uintmax_t num_ops, uintmax_t max_threads) const
-    //{
-    //    int num_threads = ::compute_num_threads(num_ops, max_threads);
-    //    return num_threads < max_num_threads ? num_threads : max_num_threads;
-    //}
-    ///* overload for max_threads defaulting to num_ops */
-    //int compute_num_threads(uintmax_t num_ops) const
-    //{ return compute_num_threads(num_ops, num_ops); }
+    /**  control parallelization  **/
+    int max_num_threads; // maximum number of parallel threads 
+    /* take into account max_num_threads attribute */
+    int compute_num_threads(uintmax_t num_ops, uintmax_t max_threads) const
+    {
+        int num_threads = ::compute_num_threads(num_ops, max_threads);
+        return num_threads < max_num_threads ? num_threads : max_num_threads;
+    }
+    /* overload for max_threads defaulting to num_ops */
+    int compute_num_threads(uintmax_t num_ops) const
+    { return compute_num_threads(num_ops, num_ops); }
 
     /* representing infinite values (has_infinity checked by constructor) */
     static real_t real_inf(){ return std::numeric_limits<real_t>::infinity(); }
@@ -390,7 +390,7 @@ private:
 
     /* parameters */
     int it_max; // maximum number of cut-pursuit iterations
-    //bool balance_parallel_split; // switch parallel split balancing
+    bool balance_parallel_split; // switch parallel split balancing
     index_t max_split_size; // ensure maxflow not working on components too big
 
     /* monitoring */
@@ -420,8 +420,7 @@ private:
         index_t*& adj_vertices_r);
 
     /* update connected components and count saturated ones */
-    bool compute_connected_components();
-
+    void compute_connected_components();
 
     /* allocate and compute reduced graph structure;
      * NOTA: reduced edges must guarantee 1-4), see member declaration */

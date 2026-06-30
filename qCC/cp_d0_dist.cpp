@@ -1,7 +1,7 @@
 /*=============================================================================
  * Hugo Raguet 2018, 2022, 2023
  *===========================================================================*/
-#include "cp_d0_dist.hpp"
+#include "cp_d0_dist.h"
 
 #define VERT_WEIGHTS_(v) (vert_weights ? vert_weights[(v)] : (real_t) 1.0)
 #define COOR_WEIGHTS_(d) (coor_weights ? coor_weights[(d)] : (real_t) 1.0)
@@ -76,6 +76,8 @@ TPL void CP_D0_DIST::set_loss(real_t loss, const real_t* Y,
     const real_t c = 1.0 - s;  
     const real_t u = s/(D - Q);
     real_t fYY_par = 0.0; // auxiliary variable for parallel region
+    #pragma omp parallel for schedule(static) NUM_THREADS(V*(D - loss), V) \
+        reduction(+:fYY_par)
     for (index_t v = 0; v < V; v++){
         const real_t* Yv = Y + D*v;
         real_t H_Yv = 0.0;
@@ -120,6 +122,7 @@ TPL void CP_D0_DIST::solve_reduced_problem()
     free(comp_weights);
     comp_weights = (real_t*) malloc_check(sizeof(real_t)*rV);
 
+    #pragma omp parallel for schedule(static) NUM_THREADS(2*D*V, rV)
     for (comp_t rv = 0; rv < rV; rv++){
         real_t* rXv = rX + D*rv;
         comp_weights[rv] = 0.0;
@@ -264,6 +267,8 @@ TPL index_t CP_D0_DIST::merge()
 TPL real_t CP_D0_DIST::compute_evolution() const
 {
     real_t dif = 0.0;
+    #pragma omp parallel for schedule(dynamic) reduction(+:dif) \
+        NUM_THREADS(D*(V - saturated_vert), rV)
     for (comp_t rv = 0; rv < rV; rv++){
         if (is_saturated[rv]){ continue; }
         const real_t* rXv = rX + D*rv;
@@ -288,7 +293,7 @@ TPL real_t CP_D0_DIST::compute_evolution() const
     return amp > eps ? dif/amp : dif/eps;
 }
 
-template class Cp_d0_dist<float, uint32_t, uint16_t>;
-template class Cp_d0_dist<double, uint32_t, uint16_t>;
-template class Cp_d0_dist<float, uint32_t, uint32_t>;
-template class Cp_d0_dist<double, uint32_t, uint32_t>;
+template class Cp_d0_dist<float, int32_t, int16_t>;
+template class Cp_d0_dist<double, int32_t, int16_t>;
+template class Cp_d0_dist<float, int32_t, int32_t>;
+template class Cp_d0_dist<double, int32_t, int32_t>;

@@ -24,13 +24,6 @@ ccCutPursuitDlg::ccCutPursuitDlg(QWidget* parent /*=nullptr*/)
     , Ui::CutPursuitDialog()
 {
 	setupUi(this);
-
-	octreeLevelSpinBox->setMaximum(CCCoreLib::DgmOctree::MAX_OCTREE_LEVEL);
-}
-
-int ccCutPursuitDlg::getOctreeLevel()
-{
-	return octreeLevelSpinBox->value();
 }
 
 int ccCutPursuitDlg::getKNN()

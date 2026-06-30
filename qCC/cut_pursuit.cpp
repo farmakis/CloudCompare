@@ -3,7 +3,7 @@
  *===========================================================================*/
 #include <algorithm>
 #include <random>
-#include "cut_pursuit.hpp"
+#include "cut_pursuit.h"
 
 #define ADD1(i) (((size_t) i) + (size_t) 1) // avoid overflows
 #define EDGE_WEIGHTS_(e) (edge_weights ? edge_weights[(e)] : homo_edge_weight)
@@ -28,7 +28,7 @@
     typename value_t>
 #define CP Cp<real_t, index_t, comp_t, value_t>
 
-using namespace std;
+using namespace std; 
 
 TPL CP::Cp(index_t V, index_t E, const index_t* first_edge,
     const index_t* adj_vertices, size_t D)
@@ -68,6 +68,9 @@ TPL CP::Cp(index_t V, index_t E, const index_t* first_edge,
     split_values_init_num = 1;
     split_values_iter_num = 1;
 
+    max_num_threads = omp_get_max_threads();
+    balance_parallel_split = max_num_threads > 1 &&
+        compute_num_threads(maxflow_complexity()) > 1;
     max_split_size = V;
 }
 
@@ -158,6 +161,16 @@ TPL void CP::set_split_param(index_t max_split_size, comp_t K,
     this->split_values_iter_num = split_values_iter_num;
 }
 
+TPL void CP::set_parallel_param(int max_num_threads,
+    bool balance_parallel_split)
+{
+    if (max_num_threads <= 0){ max_num_threads = omp_get_max_threads(); }
+    this->max_num_threads = max_num_threads;
+    this->balance_parallel_split = balance_parallel_split
+        && max_num_threads > 1
+        && compute_num_threads(split_complexity()) > 1;
+}
+
 TPL comp_t CP::get_components(const comp_t** comp_assign,
     const index_t** first_vertex, const index_t** comp_list) const
 {
@@ -185,9 +198,8 @@ TPL const value_t* CP::get_reduced_values() const { return rX; }
 
 TPL void CP::set_reduced_values(value_t* rX){ this->rX = rX; }
 
-TPL int CP::cut_pursuit(bool init, std::function<void(int)> progressCallBack)
+TPL int CP::cut_pursuit(bool init)
 {
-
     int it = 0;
     double timer = 0.0;
     real_t dif = real_inf();
@@ -204,8 +216,6 @@ TPL int CP::cut_pursuit(bool init, std::function<void(int)> progressCallBack)
         if (elapsed_time){ elapsed_time[it] = timer = monitor_time(start); }
         if (verbose){ print_progress(it, dif, timer); }
         if (it == it_max || dif <= dif_tol){ break; }
-
-		    progressCallBack(30+int(double(it)/it_max*65.0));
 
         if (verbose){
             cout << "Cut-pursuit iteration " << it + 1 << " (max. " << it_max
@@ -250,15 +260,7 @@ TPL int CP::cut_pursuit(bool init, std::function<void(int)> progressCallBack)
         free(rX); rX = nullptr;
 
         if (verbose){ cout << "\tCompute connected components... " << flush; }
-        if (!compute_connected_components()) {
-          if (verbose) {
-            cout << "Error: connected components exceeds the maximum value (65535). Return" << endl;
-          }
-          free(last_comp_assign); last_comp_assign = nullptr;
-          free(reduced_edges); reduced_edges = nullptr;
-          free(reduced_edge_weights); reduced_edge_weights = nullptr;
-          return -1;
-        }
+        compute_connected_components();
         if (verbose){
             cout << rV << " connected component(s), " << saturated_comp <<
                 " saturated." << endl;
@@ -335,6 +337,7 @@ TPL void CP::single_connected_component()
 TPL void CP::assign_connected_components()
 {
     /* activate edges between components */
+    #pragma omp parallel for schedule(static) NUM_THREADS(E, V)
     for (index_t v = 0; v < V; v++){
         comp_t rv = comp_assign[v];
         for (index_t e = first_edge[v]; e < first_edge[v + 1]; e++){
@@ -404,7 +407,7 @@ TPL void CP::get_bind_reverse_edges(comp_t rv, index_t*& first_edge_r,
     first_edge_r[0] = 0;
 }
 
-TPL bool CP::compute_connected_components()
+TPL void CP::compute_connected_components()
 {
     /**  new connected components hierarchically derives from previous ones,
      **  we can thus compute them in parallel along previous components  **/
@@ -420,6 +423,8 @@ TPL bool CP::compute_connected_components()
      * index of each vertex within its component **/
     index_in_comp = (index_t*) malloc_check(sizeof(index_t)*V);
 
+    #pragma omp parallel for schedule(dynamic) NUM_THREADS(2*E, rV) \
+        reduction(+:tmp_rV, saturated_comp_par, saturated_vert_par)
     for (comp_t rv = 0; rv < rV; rv++){
         index_t comp_size = first_vertex[rv + 1] - first_vertex[rv];
 
@@ -501,8 +506,7 @@ TPL bool CP::compute_connected_components()
         cerr << "Cut-pursuit: number of components (" << tmp_rV << ") greater "
             "than can be represented by comp_t (" << MAX_NUM_COMP << ")"
             << endl;
-        //exit(EXIT_FAILURE);
-		return false;
+        exit(EXIT_FAILURE);
     }
 
     /**  update components lists, assignments and saturation  **/
@@ -523,7 +527,6 @@ TPL bool CP::compute_connected_components()
         comp_assign[v] = rv;
     }
     first_vertex[rV] = V;
-	return true;
 }
 
 TPL void CP::compute_reduced_graph()
@@ -714,11 +717,12 @@ TPL int CP::balance_split(comp_t& rV_big, comp_t& rV_new,
    rV_new will be the number of resulting new components
    first_vertex_big will store info on list of vertices of big components */
 {
+    int num_thrds = compute_num_threads(split_complexity());
 
     /**  sort components by decreasing size
      * even if no balancing is required, sorting is useful for dynamic
      * scheduling of parallel split */
-    if (max_split_size < V){
+    if (num_thrds > 1 || max_split_size < V){
         /* get component sizes */
         index_t* comp_sizes = (index_t*) malloc_check(sizeof(index_t)*rV);
         for (comp_t rv = 0; rv < rV; rv++){
@@ -729,11 +733,15 @@ TPL int CP::balance_split(comp_t& rV_big, comp_t& rV_new,
         /* get sorting permutation indices */
         comp_t* sort_comp = (comp_t*) malloc_check(sizeof(comp_t)*rV);
         for (comp_t rv = 0; rv < rV; rv++){ sort_comp[rv] = rv; }
-
+        /* sorting can be parallelized as well...
+         * libstdc++ users can simply compile with -D_GLIBCXX_PARALLEL
+         * in which case, omp_set_num_threads() will determine the number of
+         * threads used; scaling linearly with rV seems to work best */ 
+        omp_set_num_threads(compute_num_threads(rV));
         sort(sort_comp, sort_comp + rV,
             [comp_sizes] (comp_t ru, comp_t rv) -> bool
             { return comp_sizes[ru] > comp_sizes[rv]; }); // decreasing order
-
+        omp_set_num_threads(omp_get_num_procs());
         /* reorder saturation */
         for (comp_t rv = 0; rv < rV; rv++){
             is_saturated[rv] = !comp_sizes[sort_comp[rv]];
@@ -768,13 +776,15 @@ TPL int CP::balance_split(comp_t& rV_big, comp_t& rV_new,
 
         free(sort_comp);
     }
-    if (max_split_size >= first_vertex[1] - first_vertex[0]) {
+
+    if (!balance_parallel_split &&
+        max_split_size >= first_vertex[1] - first_vertex[0]){
         rV_new = 0; rV_big = 0;
-        return (comp_t) rV;
+        return (comp_t) num_thrds < rV ? num_thrds : rV;
     }
 
     /* maximum component size for parallelism or maxflow performance */
-    index_t max_comp_size = (V - 1) + 1;
+    index_t max_comp_size = (V - 1)/num_thrds + 1;
     if (max_comp_size > max_split_size){ max_comp_size = max_split_size; }
 
     /**  get number of components to split  **/
@@ -786,7 +796,7 @@ TPL int CP::balance_split(comp_t& rV_big, comp_t& rV_new,
 
     if (!rV_big){
         rV_new = 0;
-        return (comp_t) rV;
+        return (comp_t) num_thrds < rV ? num_thrds : rV;
     }
 
     /**  split big components and create balanced component list  **/
@@ -799,6 +809,8 @@ TPL int CP::balance_split(comp_t& rV_big, comp_t& rV_new,
      * index of each vertex within its component */
     index_in_comp = (index_t*) malloc_check(sizeof(index_t)*V);
 
+    #pragma omp parallel for schedule(dynamic) \
+        NUM_THREADS(2*E*first_vertex[rV_big]/V, rV_big) reduction(+:rV_new_par)
     for (comp_t rv = 0; rv < rV_big; rv++){
         index_t comp_size = first_vertex[rv + 1] - first_vertex[rv];
 
@@ -904,7 +916,9 @@ TPL int CP::balance_split(comp_t& rV_big, comp_t& rV_new,
         first_vertex_bal[rv + rV_dif] = first_vertex[rv];
     }
 
-    ///**  set separation on edges between new components  **/
+    /**  set separation on edges between new components  **/
+    #pragma omp parallel for schedule(static) \
+        NUM_THREADS(E*first_vertex_bal[rV_new]/V, rV_new)
     for (comp_t rv_new = 0; rv_new < rV_new; rv_new++){
         for (index_t i = first_vertex_bal[rv_new];
              i < first_vertex_bal[rv_new + 1]; i++){
@@ -946,14 +960,16 @@ TPL int CP::balance_split(comp_t& rV_big, comp_t& rV_new,
     first_vertex = first_vertex_bal;
     rV = rV_bal;
 
-    return (comp_t) rV;
+    return (comp_t) num_thrds < rV ? num_thrds : rV;
 }
 
 TPL index_t CP::remove_balance_separations(comp_t rV_new)
 {
     index_t activation = 0;
 
-    ///* reconstruct component assignment (only on new components) */
+    /* reconstruct component assignment (only on new components) */
+    #pragma omp parallel for schedule(static) \
+        NUM_THREADS(first_vertex[rV_new], rV_new)
     for (comp_t rv_new = 0; rv_new < rV_new; rv_new++){
         for (index_t i = first_vertex[rv_new]; i < first_vertex[rv_new + 1];
             i++){
@@ -961,6 +977,10 @@ TPL index_t CP::remove_balance_separations(comp_t rV_new)
         }
     }
 
+    /* parallel separation edges are cut if at least one end vertex belongs
+     * to a nonsaturated component, to favor cutting */
+    #pragma omp parallel for schedule(static) reduction(+:activation) \
+        NUM_THREADS(E*first_vertex[rV_new]/V, rV_new)
     for (comp_t rv_new = 0; rv_new < rV_new; rv_new++){
         const bool sat = is_saturated[rv_new];
         for (index_t i = first_vertex[rv_new]; i < first_vertex[rv_new + 1];
@@ -1068,13 +1088,10 @@ TPL real_t CP::vert_split_cost(const Split_info& split_info, index_t v,
 TPL CP::Split_info::Split_info(comp_t rv) : rv(rv), K(0), first_k(0),
     sX(nullptr) {}
 
-TPL CP::Split_info::~Split_info() {
-    //free(sX);
-}
+TPL CP::Split_info::~Split_info() { free(sX); }
 
 TPL typename CP::Split_info CP::initialize_split_info(comp_t rv)
 {
-
     Split_info split_info(rv);
 
     split_info.sX = (value_t*) malloc_check(sizeof(value_t)*D*K);
@@ -1308,13 +1325,16 @@ TPL index_t CP::split()
     index_t activation = 0;
     comp_t rV_new, rV_big;
     index_t* first_vertex_big;
-    balance_split(rV_big, rV_new, first_vertex_big);
+    int num_thrds = balance_split(rV_big, rV_new, first_vertex_big);
+    (void) num_thrds; /* prevent "unused variable" warning */
 
     /* components are processed in parallel but graph structure specifies edges
      * ends with global indexing; the following table enables constant time
      * conversion to indexing within components */
     index_in_comp = (index_t*) malloc_check(sizeof(index_t)*V);
 
+    #pragma omp parallel for schedule(dynamic) num_threads(num_thrds) \
+        reduction(+:activation)
     for (comp_t rv = 0; rv < rV; rv++){
         if (is_saturated[rv]){ continue; }
         /**  build flow graph structure  **/
@@ -1370,6 +1390,7 @@ TPL index_t CP::split()
     }
 
     /* reconstruct components assignment */
+    #pragma omp parallel for schedule(static) NUM_THREADS(V, rV)
     for (comp_t rv = 0; rv < rV; rv++){
         for (index_t i = first_vertex[rv]; i < first_vertex[rv + 1]; i++){
             comp_assign[comp_list[i]] = rv;
@@ -1527,6 +1548,8 @@ TPL index_t CP::merge()
 
     /* deactivate edges between merged components */
     index_t deactivation = 0;
+    #pragma omp parallel for schedule(static) NUM_THREADS(E, rV) \
+        reduction(+:deactivation)
     for (comp_t rv = 0; rv < rV; rv++){
         for (index_t i = first_vertex[rv]; i < first_vertex[rv + 1]; i++){
             index_t v = comp_list[i];
@@ -1613,25 +1636,17 @@ TPL index_t CP::merge()
     return deactivation;
 }
 
-///**  instantiate for compilation  **/
-//#if defined _OPENMP && _OPENMP < 200805
-///* use of unsigned counter in parallel loops requires OpenMP 3.0;
-// * although published in 2008, MSVC still does not support it as of 2020 */
-//template class Cp<float, int32_t, int16_t>;
-//template class Cp<double, int32_t, int16_t>;
-//template class Cp<float, int32_t, int32_t>;
-//template class Cp<double, int32_t, int32_t>;
-//#else
-//template class Cp<float, uint32_t, uint16_t>;
-//template class Cp<double, uint32_t, uint16_t>;
-//template class Cp<float, uint32_t, uint32_t>;
-//template class Cp<double, uint32_t, uint32_t>;
-//#endif
-
-
 /**  instantiate for compilation  **/
+#if defined _OPENMP && _OPENMP < 200805
+/* use of unsigned counter in parallel loops requires OpenMP 3.0;
+ * although published in 2008, MSVC still does not support it as of 2020 */
+template class Cp<float, int32_t, int16_t>;
+template class Cp<double, int32_t, int16_t>;
+template class Cp<float, int32_t, int32_t>;
+template class Cp<double, int32_t, int32_t>;
+#else
 template class Cp<float, uint32_t, uint16_t>;
 template class Cp<double, uint32_t, uint16_t>;
 template class Cp<float, uint32_t, uint32_t>;
 template class Cp<double, uint32_t, uint32_t>;
-
+#endif

@@ -1,7 +1,7 @@
 /*=============================================================================
  * Hugo Raguet 2019
  *===========================================================================*/
-#include "cut_pursuit_d0.hpp"
+#include "cut_pursuit_d0.h"
 #include <set>
 #include <algorithm>
 
@@ -29,7 +29,8 @@ TPL CP_D0::Cp_d0(index_t V, index_t E, const index_t* first_edge,
 TPL real_t CP_D0::compute_graph_d0() const
 {
     real_t weighted_contour_length = 0.0;
-
+    #pragma omp parallel for schedule(static) NUM_THREADS(rE) \
+        reduction(+:weighted_contour_length)
     for (index_t re = 0; re < rE; re++){
         weighted_contour_length += reduced_edge_weights[re];
     }
@@ -39,6 +40,8 @@ TPL real_t CP_D0::compute_graph_d0() const
 TPL real_t CP_D0::compute_f() const
 {
     real_t f = 0.0;
+    #pragma omp parallel for schedule(dynamic) NUM_THREADS(D*V, rV) \
+        reduction(+:f)
     for (comp_t rv = 0; rv < rV; rv++){
         real_t* rXv = rX + D*rv;
         for (index_t i = first_vertex[rv]; i < first_vertex[rv + 1]; i++){
@@ -83,6 +86,8 @@ TPL comp_t CP_D0::compute_merge_chains()
     merge_values = (value_t**) malloc_check(sizeof(value_t*)*rE);
     for (index_t re = 0; re < rE; re++){ merge_values[re] = nullptr; }
     index_t num_pos_candidates = 0, num_neg_candidates = 0;
+    #pragma omp parallel for NUM_THREADS(merge_info_complexity()*rE, rE) \
+        schedule(static) reduction(+:num_pos_candidates, num_neg_candidates)
     for (index_t re = 0; re < rE; re++){
         comp_t ru = reduced_edges_u(re);
         comp_t rv = reduced_edges_v(re);
@@ -328,7 +333,7 @@ TPL comp_t CP_D0::compute_merge_chains()
     return merge_count;
 }
 
-template class Cp_d0<float, uint32_t, uint16_t>;
-template class Cp_d0<double, uint32_t, uint16_t>;
-template class Cp_d0<float, uint32_t, uint32_t>;
-template class Cp_d0<double, uint32_t, uint32_t>;
+template class Cp_d0<float, int32_t, int16_t>;
+template class Cp_d0<double, int32_t, int16_t>;
+template class Cp_d0<float, int32_t, int32_t>;
+template class Cp_d0<double, int32_t, int32_t>;

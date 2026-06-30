@@ -21,7 +21,7 @@
 =============================================================================*/
 
 #pragma once
-#include "block.hpp"
+#include "block.h"
 
 /* index_t is an integer type able to hold the number of nodes and of edges;
  * flow_t is a numeric type for the flow (capacities) */

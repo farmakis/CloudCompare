@@ -27,7 +27,7 @@
  *===========================================================================*/
 #pragma once
 #include <cmath>
-#include "cut_pursuit_d0.hpp"
+#include "cut_pursuit_d0.h"
 
 /* real_t is the real numeric type, used for the base field and for the
  * objective functional computation;

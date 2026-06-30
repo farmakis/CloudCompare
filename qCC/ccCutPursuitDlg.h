@@ -29,9 +29,6 @@ class ccCutPursuitDlg : public QDialog
 	//! Default constructor
 	explicit ccCutPursuitDlg(QWidget* parent = nullptr);
 
-	//! Returns octree level (defines grid step)
-	int getOctreeLevel();
-
 	//! Returns knn parameter
 	int getKNN();
 
