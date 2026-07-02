@@ -4524,13 +4524,15 @@ void MainWindow::doActionCutPursuit()
 
 	typedef float real_t;      	// For data and weights
 	typedef int32_t index_t;   	// For vertex and edge indices
-	typedef int16_t comp_t;   	// For component indices
+	typedef int32_t comp_t;   	// For component indices
 
-	static index_t s_knn				= dlg.getKNN();
-	static double s_knnRadius			= dlg.getKNNRadius();
-	static real_t s_regularization   	= dlg.getRegularization();
-	static real_t s_spatialWeight    	= dlg.getSpatialWeight();
-	static index_t s_cutoff      	    = dlg.getCutoff();
+	index_t s_knn				= dlg.getKNN();
+	double s_knnRadius			= dlg.getKNNRadius();
+	real_t s_regularization   	= dlg.getRegularization();
+	real_t s_spatialWeight    	= dlg.getSpatialWeight();
+	index_t s_cutoff      	    = dlg.getCutoff();
+	bool s_averageColors		= dlg.averageColors();
+	bool s_useRGB				= dlg.useRGB();
 
 	ccProgressDialog pDlg(false, this);
 	pDlg.setAutoClose(false);
@@ -4547,6 +4549,18 @@ void MainWindow::doActionCutPursuit()
 		if (cloud && cloud->isA(CC_TYPES::POINT_CLOUD))
 		{
 			ccPointCloud* pc = static_cast<ccPointCloud*>(cloud);
+
+			// Remove any existing Cut Pursuit scalar field before processing,
+			// so it is not counted in D and does not contaminate Y data
+			{
+				int prevSfIdx = pc->getScalarFieldIndexByName(CC_CUT_PURSUIT_LABEL_NAME);
+				if (prevSfIdx >= 0)
+				{
+					pc->deleteScalarField(prevSfIdx);
+				}
+			}
+
+			size_t rgbDim = (s_useRGB && pc->hasColors()) ? 3 : 0;
 
 			ccOctree::Shared theOctree = cloud->getOctree();
 			if (!theOctree)
@@ -4615,7 +4629,7 @@ void MainWindow::doActionCutPursuit()
 			}
 
 			// parallel cut pursuit params
-			index_t D = 3 + static_cast<index_t>(pc->getNumberOfScalarFields());
+			index_t D = 3 + static_cast<index_t>(pc->getNumberOfScalarFields()) + static_cast<index_t>(rgbDim);
 			index_t N = static_cast<index_t>(pc->size());
 			index_t E = static_cast<index_t>(edges.size() / 2);
 			std::vector<real_t> Y(N * D, 0.0f);
@@ -4689,7 +4703,7 @@ void MainWindow::doActionCutPursuit()
 			// populate (column-major) Y with point coordinates and scalar field values
 			// subtract the first point coordinates to avoid numerical issues with cut pursuit
 			CCVector3 posOffset(0, 0, 0);
-			for (unsigned i = 0; i < N; ++i)
+			for (index_t i = 0; i < N; ++i)
 			{
 				posOffset += *pc->getPoint(i);
 			}
@@ -4703,9 +4717,13 @@ void MainWindow::doActionCutPursuit()
 				Y[i * D + 1] = static_cast<real_t>(P->y - posOffset.y);
 				Y[i * D + 2] = static_cast<real_t>(P->z - posOffset.z);
 
-				// if (i < 5){
-				// 	ccLog::Print(tr("[Cut Pursuit] Point #%1: (%2, %3, %4)").arg(i).arg(Y[i * D + 0]).arg(Y[i * D + 1]).arg(Y[i * D + 2]));
-				// }
+				if (s_useRGB && pc->hasColors())
+				{
+					const ccColor::Rgba& C = pc->getPointColor(i);
+					Y[i * D + 3] = static_cast<real_t>(C.r / 255.0);
+					Y[i * D + 4] = static_cast<real_t>(C.g / 255.0);
+					Y[i * D + 5] = static_cast<real_t>(C.b / 255.0);
+				}
 
 				for (unsigned j = 0; j < pc->getNumberOfScalarFields(); ++j)
 				{
@@ -4717,12 +4735,8 @@ void MainWindow::doActionCutPursuit()
 					{
 						value = 0.0f;
 					}
-					// Scalar fields start at feature index 3
-                    Y[i * D + 3 + j] = value;
-
-					// if (i < 5){
-					// 	ccLog::Print(tr("[Cut Pursuit] Point #%1, SF #%2: %3").arg(i).arg(j).arg(Y[i * D + 3 + j]));
-					// }
+					// Scalar fields start at feature index 3, if RGB is used, they start at feature index 6
+                    Y[i * D + 3 + rgbDim + j] = value;
 				}
 			}
 			
@@ -4740,12 +4754,12 @@ void MainWindow::doActionCutPursuit()
 				new Cp_d0_dist<real_t, index_t, comp_t>
 					(N, E, first_edge.data(), adj_vertices.data(), Y.data(), D);
 
-			cp->set_loss(1.0f, Y.data(), node_size.data(), coor_weights.data());
+			cp->set_loss(static_cast<real_t>(D), Y.data(), node_size.data(), coor_weights.data());
 			cp->set_edge_weights(edgeWeights.data(), s_regularization);
 			cp->set_cp_param(cp_dif_tol, cp_it_max, verbose);
 			cp->set_split_param(max_split_size, K, split_iter_num, split_damp_ratio,
 				kmpp_init_num, kmpp_iter_num);
-			cp->set_min_comp_weight(0.0f);
+			cp->set_min_comp_weight(static_cast<real_t>(s_cutoff));
 			cp->set_parallel_param(max_num_threads, balance_parallel_split);
 			cp->set_monitoring_arrays(Obj, Time, Dif);
 			cp->set_components(0, Comp);
@@ -4764,25 +4778,63 @@ void MainWindow::doActionCutPursuit()
 			const index_t* comp_list;
 			auto rV = cp->get_components(&comp_assign, &first_vertex, &comp_list);
 
-			ccLog::Warning(tr("[Cut Pursuit] Generated '%1' components").arg(rV));
+			ccLog::Print(tr("[Cut Pursuit] Partitioned cloud '%1' into %2 components").arg(pc->getName()).arg(rV));
 
-			// // we create/activate Cut Pursuit's label scalar field
-			// int sfIdx = pc->getScalarFieldIndexByName(CC_CUT_PURSUIT_LABEL_NAME);
-			// if (sfIdx < 0)
-			// {
-			// 	sfIdx = pc->addScalarField(CC_CUT_PURSUIT_LABEL_NAME);
-			// }
-			// if (sfIdx < 0)
-			// {
-			// 	ccConsole::Error(tr("Couldn't allocate a new scalar field for computing Cut Pursuit labels! Try to free some memory ..."));
-			// 	break;
-			// }
-			// pc->setCurrentScalarField(sfIdx);
+			// we create/activate Cut Pursuit's label scalar field
+			int sfIdx = pc->getScalarFieldIndexByName(CC_CUT_PURSUIT_LABEL_NAME);
+			if (sfIdx < 0)
+			{
+				sfIdx = pc->addScalarField(CC_CUT_PURSUIT_LABEL_NAME);
+			}
+			if (sfIdx < 0)
+			{
+				ccConsole::Error(tr("Couldn't allocate a new scalar field for computing Cut Pursuit labels! Try to free some memory ..."));
+				break;
+			}
+			pc->setCurrentScalarField(sfIdx);
 
-			// // Clean up the dynamically allocated arrays for this cloud to prevent memory leaks
-            // delete[] Y;
-            // delete[] Comp;
-            // delete cp;
+			// Assign component index to each point
+			ccScalarField* sf = static_cast<ccScalarField*>(pc->getScalarField(sfIdx));
+			for (index_t i = 0; i < N; ++i)
+			{
+				sf->setValue(i, static_cast<ScalarType>(comp_assign[i]));
+			}
+			sf->computeMinAndMax();
+
+			if (s_averageColors && pc->hasColors())
+			{
+				// Average colors for each component
+				std::vector<CCVector3d> compColorSum(rV, CCVector3d(0, 0, 0));
+				std::vector<unsigned> compCount(rV, 0);
+
+				for (index_t i = 0; i < N; ++i)
+				{
+					comp_t compIdx = comp_assign[i];
+					const ccColor::Rgba& C = pc->getPointColor(i);
+					compColorSum[compIdx] += CCVector3d(C.r, C.g, C.b);
+					compCount[compIdx]++;
+				}
+
+				for (index_t i = 0; i < N; ++i)
+				{
+					comp_t compIdx = comp_assign[i];
+					if (compCount[compIdx] > 0)
+					{
+						CCVector3d avgColor = compColorSum[compIdx] / static_cast<double>(compCount[compIdx]);
+						pc->setPointColor(i, ccColor::Rgb(static_cast<ColorCompType>(avgColor.x),
+														 static_cast<ColorCompType>(avgColor.y),
+														 static_cast<ColorCompType>(avgColor.z)));
+					}
+				}
+				pc->showColors(true);
+			}
+
+			pc->setCurrentDisplayedScalarField(sfIdx);
+			pc->showSF(true);
+			pc->prepareDisplayForRefresh();
+
+			// cp destructor frees comp_assign (= Comp); Y is a std::vector (auto-freed)
+			delete cp;
 		}
 	}
 

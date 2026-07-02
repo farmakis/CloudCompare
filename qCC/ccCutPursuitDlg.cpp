@@ -31,17 +31,17 @@ int ccCutPursuitDlg::getKNN()
 	return knnSpinBox->value();
 }
 
-int ccCutPursuitDlg::getKNNRadius()
+double ccCutPursuitDlg::getKNNRadius()
 {
 	return knnRadiusSpinBox->value();
 }
 
-int ccCutPursuitDlg::getRegularization()
+double ccCutPursuitDlg::getRegularization()
 {
 	return regularizationSpinBox->value();
 }
 
-int ccCutPursuitDlg::getSpatialWeight()
+double ccCutPursuitDlg::getSpatialWeight()
 {
 	return spatialWeightSpinBox->value();
 }
@@ -51,7 +51,12 @@ int ccCutPursuitDlg::getCutoff()
 	return cutoffSpinBox->value();
 }
 
-bool ccCutPursuitDlg::randomColors()
+bool ccCutPursuitDlg::useRGB()
 {
-	return (randomColorsCheckBox->checkState() == Qt::Checked);
+	return (rgbCheckBox->checkState() == Qt::Checked);
+}
+
+bool ccCutPursuitDlg::averageColors()
+{
+	return (averageColorsCheckBox->checkState() == Qt::Checked);
 }

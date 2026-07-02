@@ -293,6 +293,7 @@ TPL real_t CP_D0_DIST::compute_evolution() const
     return amp > eps ? dif/amp : dif/eps;
 }
 
+/**  instantiate for compilation  **/
 template class Cp_d0_dist<float, int32_t, int16_t>;
 template class Cp_d0_dist<double, int32_t, int16_t>;
 template class Cp_d0_dist<float, int32_t, int32_t>;

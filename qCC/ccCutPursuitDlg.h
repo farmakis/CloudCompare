@@ -33,17 +33,20 @@ class ccCutPursuitDlg : public QDialog
 	int getKNN();
 
 	//! Returns search radius parameter
-	int getKNNRadius();
+	double getKNNRadius();
 	
 	//! Returns regularization parameter
-	int getRegularization();
+	double getRegularization();
 
 	//! Returns spatial weight factor
-	int getSpatialWeight();
+	double getSpatialWeight();
 
 	//! Returns cutoff parameter
 	int getCutoff();
 
-	//! Specifies whether each extracted CC should get a random color
-	bool randomColors();
+	//! Returns use RGB parameter
+	bool useRGB();
+
+	//! Returns average colors parameter
+	bool averageColors();
 };

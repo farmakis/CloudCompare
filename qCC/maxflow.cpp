@@ -442,5 +442,6 @@ TPL void MXFL::maxflow()
     nodeptr_block = nullptr; 
 }
 
+/**  instantiate for compilation  **/
 template class Maxflow<int32_t, float>;
 template class Maxflow<int32_t, double>;
