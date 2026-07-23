@@ -159,11 +159,6 @@
 #include <iostream>
 #include <random>
 
-#include "grid_graph.h"
-#include "omp_num_threads.h"
-#include "cp_d0_dist.h"
-#include "cut_pursuit.h"
-
 // global static pointer (as there should only be one instance of MainWindow!)
 static MainWindow* s_instance = nullptr;
 
@@ -4534,9 +4529,6 @@ void MainWindow::doActionCutPursuit()
 	bool s_averageColors		= dlg.averageColors();
 	bool s_useRGB				= dlg.useRGB();
 
-	ccProgressDialog pDlg(false, this);
-	pDlg.setAutoClose(false);
-
 	// we unselect all entities as we are going to automatically select the created components
 	//(otherwise the user won't perceive the change!)
 	if (m_ccRoot)
@@ -4560,8 +4552,6 @@ void MainWindow::doActionCutPursuit()
 				}
 			}
 
-			size_t rgbDim = (s_useRGB && pc->hasColors()) ? 3 : 0;
-
 			ccOctree::Shared theOctree = cloud->getOctree();
 			if (!theOctree)
 			{
@@ -4574,131 +4564,39 @@ void MainWindow::doActionCutPursuit()
 				}
 			}
 
-			// call cut pursuit
-			unsigned char bestLevel = theOctree->findBestLevelForAGivenNeighbourhoodSizeExtraction(s_knnRadius);
-			CCCoreLib::ReferenceCloud neighbors(pc);
-
-			// allocate memory for edges computation
-			std::vector<index_t> edges;
-			// edges.reserve(pc->size() * s_knn * 2);
-			std::vector<real_t> distances;
-			// distances.reserve(pc->size() * s_knn);
-			
-			// compute edges
-			real_t distancesSum = 0.0;
-			for (unsigned i = 0; i < pc->size(); ++i)
+			// we create/activate Cut Pursuit's label scalar field
+			int sfIdx = pc->getScalarFieldIndexByName(CC_CUT_PURSUIT_LABEL_NAME);
+			if (sfIdx < 0)
 			{
-				neighbors.clear(false);
-				double maxSquareDist = 0.0;
-				int finalNeighbourhoodSize = 0;
-				const CCVector3* queryPoint = pc->getPoint(i);
-				if (theOctree->findPointNeighbourhood(
-					queryPoint,              // Position we are searching around
-					&neighbors,              // Where the resulting neighbor indices will be stored
-					s_knn,                   // Max number of neighbors (k)
-					bestLevel,               // The optimized octree level we calculated
-					maxSquareDist,           // Output: The squared distance to the furthest neighbor found
-					s_knnRadius,             // Max search radius (r)
-					&finalNeighbourhoodSize) // Output: Internal octree box search size metric (optional)
-				)
-				{
-					index_t source = static_cast<index_t>(i);
-                    for (unsigned n = 0; n < neighbors.size(); ++n)
-                    {
-                        index_t target = static_cast<index_t>(neighbors.getPointGlobalIndex(n));
-
-                        // ignore self-loops
-                        if (source == target)
-                            continue;
-
-                        edges.push_back(source); // 2*e
-                        edges.push_back(target); // 2*e + 1
-
-						// compute distance
-						const CCVector3* p1 = pc->getPoint(source);
-						const CCVector3* p2 = pc->getPoint(target);
-						real_t distance = static_cast<real_t>((*p1 - *p2).norm());
-						distancesSum += distance;
-						distances.push_back(distance);
-                    }
-				}
-				else
-				{
-					ccLog::Warning(tr("[Cut Pursuit] Failed to find neighbors for node #%1").arg(i));
-				}
+				sfIdx = pc->addScalarField(CC_CUT_PURSUIT_LABEL_NAME);
 			}
+			if (sfIdx < 0)
+			{
+				ccConsole::Error(tr("Couldn't allocate a new scalar field for computing Cut Pursuit labels! Try to free some memory ..."));
+				break;
+			}
+			pc->setCurrentScalarField(sfIdx);
 
-			// parallel cut pursuit params
+			// some parallel cut pursuit params
+			size_t rgbDim = (s_useRGB && pc->hasColors()) ? 3 : 0;
 			index_t D = 3 + static_cast<index_t>(pc->getNumberOfScalarFields()) + static_cast<index_t>(rgbDim);
 			index_t N = static_cast<index_t>(pc->size());
-			index_t E = static_cast<index_t>(edges.size() / 2);
 			std::vector<real_t> Y(N * D, 0.0f);
-			std::vector<real_t> edgeWeights(E);
-			std::vector<index_t> first_edge(N + 1);
-			std::vector<index_t> adj_vertices(E);
-            std::vector<index_t> reindex(E);
-			std::vector<real_t> node_size(N, 1.0f);
-			std::vector<real_t> coor_weights(D, 1.0f);
-			real_t cp_dif_tol = 0.01f;
-			int cp_it_max = 15;
-			int K = 2;
-			int split_iter_num = 2;
-			real_t split_damp_ratio = 0.7f;
-			int kmpp_init_num = 3;
-			int kmpp_iter_num = 3;
-			int verbose = 1000;
-			int max_num_threads = omp_get_max_threads();
-			// int max_num_threads = 1;
-			index_t max_split_size = N;
-			int balance_parallel_split = false;
-			int compute_Time = true;
-			int compute_List = true;
-			int compute_Graph = true;
-			int compute_Obj = false;
-			int compute_Dif = false;
-			
-			// monitoring arrays
-			real_t* Obj = nullptr;
-			if (compute_Obj){ Obj = (real_t*) malloc(sizeof(real_t)*(cp_it_max + 1)); }
 
-			double* Time = nullptr;
-			if (compute_Time){
-				Time = (double*) malloc(sizeof(double)*(cp_it_max + 1));
-			}
+			// initialize progress bar for cut-pursuit
+			QProgressDialog* pDlg = new QProgressDialog(this);
+			pDlg->setWindowTitle("Cut Pursuit Segmentation");
+			pDlg->setLabelText(tr("Computing...."));
+			pDlg->setCancelButton(nullptr);
+			pDlg->setRange(0, 100); // infinite progress bar
+			// pDlg->setAutoClose(false);
+			// pDlg->setAutoReset(false);
+			pDlg->show();
 
-			real_t* Dif = nullptr;
-			if (compute_Dif){ Dif = (real_t*) malloc(sizeof(real_t)*cp_it_max); }
-			
-			// compute CSR representation of the graph
-			edge_list_to_forward_star<index_t, index_t>(
-				N,
-				E,
-				edges.data(),
-				first_edge.data(),
-				reindex.data()
-			);
-
-            // apply spatial weight
-			for (index_t d = 0; d < 3; ++d)
-			{
-				coor_weights[d] *= s_spatialWeight;
-			}
-			
-			// compute targets and edge weights based on distances in CSR order
-			real_t avgDistance = distancesSum / distances.size();
-			for (index_t e = 0; e < E; ++e)
-            {
-				// compute weight based on distance
-				real_t distance = distances[e];
-				real_t edgeAttr = distance;
-				// real_t edgeAttr = static_cast<real_t>(1.0 / (1.0 + (distance / avgDistance)));
-                
-                // The target vertex for original edge 'e' is stored at (2 * e + 1)
-                adj_vertices[reindex[e]] = edges[2 * e + 1];
-                
-                // The weight for original edge 'e' maps to the same new position
-                edgeWeights[reindex[e]] = edgeAttr * s_regularization;
-            }
+			std::function<void(int)> progressCb = [pDlg](int percent) {
+				pDlg->setValue(percent);
+				QApplication::processEvents(); // Allow UI updates
+			};
 
 			// populate (column-major) Y with point coordinates and scalar field values
 			// subtract the first point coordinates to avoid numerical issues with cut pursuit
@@ -4739,60 +4637,31 @@ void MainWindow::doActionCutPursuit()
                     Y[i * D + 3 + rgbDim + j] = value;
 				}
 			}
-			
+
 			// Allocate Comp array using malloc because cut pursuit uses C-style memory tracking
             comp_t* Comp = (comp_t*)calloc(N, sizeof(comp_t));
             if (!Comp)
             {
-                ccConsole::Error(tr("Failed to allocate memory for components array!"));
+                ccConsole::Error(tr("[Cut Pursuit] Failed to allocate memory for components array!"));
             }
 
-			// std::function<void(int)> progressCallBack(30);
+			// we try to label all CCs
+			const comp_t* 	comp_assign;
+		    int         	rV = CCCoreLib::AutoSegmentationTools::labelCutPursuitComponents(cloud,
+																							s_knn,
+																							s_knnRadius,
+																							N,
+																							D,
+																							Y,
+																							s_regularization,
+																							s_spatialWeight,
+																							s_cutoff,
+																							Comp,
+																							comp_assign,
+																							progressCb,
+																							theOctree.data());
 
-			//  cut-pursuit with preconditioned forward-Douglas-Rachford
-			Cp_d0_dist<real_t, index_t, comp_t>* cp =
-				new Cp_d0_dist<real_t, index_t, comp_t>
-					(N, E, first_edge.data(), adj_vertices.data(), Y.data(), D);
-
-			cp->set_loss(static_cast<real_t>(D), Y.data(), node_size.data(), coor_weights.data());
-			cp->set_edge_weights(edgeWeights.data(), s_regularization);
-			cp->set_cp_param(cp_dif_tol, cp_it_max, verbose);
-			cp->set_split_param(max_split_size, K, split_iter_num, split_damp_ratio,
-				kmpp_init_num, kmpp_iter_num);
-			cp->set_min_comp_weight(static_cast<real_t>(s_cutoff));
-			cp->set_parallel_param(max_num_threads, balance_parallel_split);
-			cp->set_monitoring_arrays(Obj, Time, Dif);
-			cp->set_components(0, Comp);
-
-			int cp_it = cp->cut_pursuit();
 			
-			// // if (cp->cut_pursuit(true, progressCallBack)<0)
-			// // {
-			// // 	delete cp;
-			// // 	return false;
-			// // }
-
-			// Get number of components and their lists of indices
-			const comp_t* comp_assign;
-			const index_t* first_vertex;
-			const index_t* comp_list;
-			auto rV = cp->get_components(&comp_assign, &first_vertex, &comp_list);
-
-			ccLog::Print(tr("[Cut Pursuit] Partitioned cloud '%1' into %2 components").arg(pc->getName()).arg(rV));
-
-			// we create/activate Cut Pursuit's label scalar field
-			int sfIdx = pc->getScalarFieldIndexByName(CC_CUT_PURSUIT_LABEL_NAME);
-			if (sfIdx < 0)
-			{
-				sfIdx = pc->addScalarField(CC_CUT_PURSUIT_LABEL_NAME);
-			}
-			if (sfIdx < 0)
-			{
-				ccConsole::Error(tr("Couldn't allocate a new scalar field for computing Cut Pursuit labels! Try to free some memory ..."));
-				break;
-			}
-			pc->setCurrentScalarField(sfIdx);
-
 			// Assign component index to each point
 			ccScalarField* sf = static_cast<ccScalarField*>(pc->getScalarField(sfIdx));
 			for (index_t i = 0; i < N; ++i)
@@ -4800,6 +4669,8 @@ void MainWindow::doActionCutPursuit()
 				sf->setValue(i, static_cast<ScalarType>(comp_assign[i]));
 			}
 			sf->computeMinAndMax();
+
+			ccLog::Print(tr("[Cut Pursuit] Partitioned cloud '%1' into %2 components").arg(pc->getName()).arg(rV));
 
 			if (s_averageColors && pc->hasColors())
 			{
@@ -4828,13 +4699,13 @@ void MainWindow::doActionCutPursuit()
 				}
 				pc->showColors(true);
 			}
-
+			
+			pDlg->close();
+			QApplication::processEvents();
+			
 			pc->setCurrentDisplayedScalarField(sfIdx);
 			pc->showSF(true);
-			pc->prepareDisplayForRefresh();
-
-			// cp destructor frees comp_assign (= Comp); Y is a std::vector (auto-freed)
-			delete cp;
+			pc->prepareDisplayForRefresh();	
 		}
 	}
 
