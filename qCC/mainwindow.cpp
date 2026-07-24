@@ -4638,15 +4638,8 @@ void MainWindow::doActionCutPursuit()
 				}
 			}
 
-			// Allocate Comp array using malloc because cut pursuit uses C-style memory tracking
-            comp_t* Comp = (comp_t*)calloc(N, sizeof(comp_t));
-            if (!Comp)
-            {
-                ccConsole::Error(tr("[Cut Pursuit] Failed to allocate memory for components array!"));
-            }
-
 			// we try to label all CCs
-			const comp_t* 	comp_assign;
+			std::vector<comp_t> components;
 		    int         	rV = CCCoreLib::AutoSegmentationTools::labelCutPursuitComponents(cloud,
 																							s_knn,
 																							s_knnRadius,
@@ -4656,19 +4649,28 @@ void MainWindow::doActionCutPursuit()
 																							s_regularization,
 																							s_spatialWeight,
 																							s_cutoff,
-																							Comp,
-																							comp_assign,
+																							components,
 																							progressCb,
 																							theOctree.data());
 
-			
+			// error handling
+			if (rV < 0)
+			{
+				ccConsole::Error(tr("[Cut Pursuit] Failed to compute components!"));
+				pDlg->close();
+				QApplication::processEvents();
+				return;
+			}
+
 			// Assign component index to each point
 			ccScalarField* sf = static_cast<ccScalarField*>(pc->getScalarField(sfIdx));
 			for (index_t i = 0; i < N; ++i)
 			{
-				sf->setValue(i, static_cast<ScalarType>(comp_assign[i]));
+				sf->setValue(i, static_cast<ScalarType>(components[i]));
 			}
 			sf->computeMinAndMax();
+
+			progressCb(100);
 
 			ccLog::Print(tr("[Cut Pursuit] Partitioned cloud '%1' into %2 components").arg(pc->getName()).arg(rV));
 
@@ -4680,7 +4682,7 @@ void MainWindow::doActionCutPursuit()
 
 				for (index_t i = 0; i < N; ++i)
 				{
-					comp_t compIdx = comp_assign[i];
+					comp_t compIdx = components[i];
 					const ccColor::Rgba& C = pc->getPointColor(i);
 					compColorSum[compIdx] += CCVector3d(C.r, C.g, C.b);
 					compCount[compIdx]++;
@@ -4688,7 +4690,7 @@ void MainWindow::doActionCutPursuit()
 
 				for (index_t i = 0; i < N; ++i)
 				{
-					comp_t compIdx = comp_assign[i];
+					comp_t compIdx = components[i];
 					if (compCount[compIdx] > 0)
 					{
 						CCVector3d avgColor = compColorSum[compIdx] / static_cast<double>(compCount[compIdx]);
