@@ -4515,6 +4515,9 @@ void MainWindow::doActionCutPursuit()
 	bool s_averageColors		= dlg.averageColors();
 	bool s_useRGB				= dlg.useRGB();
 
+	ccProgressDialog pDlg(false, this);
+	pDlg.setAutoClose(false);
+
 	// we unselect all entities as we are going to automatically select the created components
 	//(otherwise the user won't perceive the change!)
 	if (m_ccRoot)
@@ -4569,23 +4572,6 @@ void MainWindow::doActionCutPursuit()
 			index_t N = static_cast<index_t>(pc->size());
 			std::vector<real_t> Y(N * D, 0.0f);
 
-			// initialize progress bar for cut-pursuit
-			QProgressDialog* pDlg = new QProgressDialog(this);
-			pDlg->setWindowTitle("Cut Pursuit Segmentation");
-			pDlg->setLabelText(tr("Computing...."));
-			pDlg->setCancelButton(nullptr);
-			pDlg->setRange(0, 100); // infinite progress bar
-			// pDlg->setAutoClose(false);
-			// pDlg->setAutoReset(false);
-			pDlg->show();
-
-			std::function<void(int)> progressCb = [pDlg](int percent) {
-				pDlg->setValue(percent);
-				QApplication::processEvents(); // Allow UI updates
-			};
-
-			// populate (column-major) Y with point coordinates and scalar field values
-			// subtract the first point coordinates to avoid numerical issues with cut pursuit
 			CCVector3 posOffset(0, 0, 0);
 			for (index_t i = 0; i < N; ++i)
 			{
@@ -4636,15 +4622,13 @@ void MainWindow::doActionCutPursuit()
 																							s_spatialWeight,
 																							s_cutoff,
 																							components,
-																							progressCb,
+																							&pDlg,
 																							theOctree.data());
 
 			// error handling
 			if (rV < 0)
 			{
 				ccConsole::Error(tr("[Cut Pursuit] Failed to compute components!"));
-				pDlg->close();
-				QApplication::processEvents();
 				return;
 			}
 
@@ -4655,8 +4639,6 @@ void MainWindow::doActionCutPursuit()
 				sf->setValue(i, static_cast<ScalarType>(components[i]));
 			}
 			sf->computeMinAndMax();
-
-			progressCb(100);
 
 			ccLog::Print(tr("[Cut Pursuit] Partitioned cloud '%1' into %2 components").arg(pc->getName()).arg(rV));
 
@@ -4687,9 +4669,6 @@ void MainWindow::doActionCutPursuit()
 				}
 				pc->showColors(true);
 			}
-			
-			pDlg->close();
-			QApplication::processEvents();
 			
 			pc->setCurrentDisplayedScalarField(sfIdx);
 			pc->showSF(true);
