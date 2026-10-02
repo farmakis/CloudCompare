@@ -1,0 +1,23 @@
+{
+	"type" : "Standard",
+	"core" : true,
+	"name" : "Facets2",
+	"icon" : ":/CC/plugin/qFacets2/images/qFacets2.png",
+	"description": "Graph-based discontinuity surface segmentation",
+	"authors" : [
+		{
+			"name" : "Ioannis Farmakis"
+		}
+	],
+	"maintainers" : [
+    {
+      "name": "Ioannis Farmakis"
+    }
+	],
+  "references": [
+    {
+      "text": "Documentation",
+      "url": "http://www.cloudcompare.org/doc/wiki/index.php?title=Facets_(plugin)"
+    }
+  ]
+}
