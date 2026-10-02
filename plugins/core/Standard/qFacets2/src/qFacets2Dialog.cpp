@@ -17,42 +17,41 @@
 
 #include "qFacets2Dialog.h"
 
-#include "ui_facets2Dlg.h"
+//CCPluginAPI
+#include <ccMainAppInterface.h>
 
-#include <QSettings>
+//Qt
+#include <QMainWindow>
 
-qFacets2Dialog::qFacets2Dialog( QWidget* parent )
-	: QDialog( parent )
-	, m_ui( new Ui::Facets2Dialog )
+
+qFacets2Dialog::qFacets2Dialog( ccMainAppInterface* app )
+	: QDialog( app ? app->getMainWindow() : nullptr )
+	, Ui::Facets2Dialog()
+	, m_app( app )
 {
-	m_ui->setupUi( this );
-
+	setupUi( this );
+	
 	loadParamsFromPersistentSettings();
-}
-
-qFacets2Dialog::~qFacets2Dialog()
-{
-	delete m_ui;
 }
 
 double qFacets2Dialog::getResolution() const
 {
-	return m_ui->doubleSpinBoxResolution->value();
+	return doubleSpinBoxResolution->value();
 }
 
 double qFacets2Dialog::getMinPlanarity() const
 {
-	return m_ui->doubleSpinBoxMinPlanarity->value();
+	return doubleSpinBoxMinPlanarity->value();
 }
 
 double qFacets2Dialog::getRegularization() const
 {
-	return m_ui->doubleSpinBoxRegularization->value();
+	return doubleSpinBoxRegularization->value();
 }
 
 int qFacets2Dialog::getCutoff() const
 {
-	return m_ui->spinBoxCutoff->value();
+	return spinBoxCutoff->value();
 }
 
 void qFacets2Dialog::loadParamsFromPersistentSettings()
@@ -60,24 +59,24 @@ void qFacets2Dialog::loadParamsFromPersistentSettings()
 	QSettings settings("qFacets2");
 
 	//read parameters
-	double resolution = settings.value("Resolution", m_ui->doubleSpinBoxResolution->value()).toDouble();
-	double minPlanarity = settings.value("MinPlanarity", m_ui->doubleSpinBoxMinPlanarity->value()).toDouble();
-	double regularization = settings.value("Regularization", m_ui->doubleSpinBoxRegularization->value()).toDouble();
-	int    cutoff = settings.value("Cutoff", m_ui->spinBoxCutoff->value()).toInt();
+	double resolution = settings.value("Resolution", doubleSpinBoxResolution->value()).toDouble();
+	double minPlanarity = settings.value("MinPlanarity", doubleSpinBoxMinPlanarity->value()).toDouble();
+	double regularization = settings.value("Regularization", doubleSpinBoxRegularization->value()).toDouble();
+	int    cutoff = settings.value("Cutoff", spinBoxCutoff->value()).toInt();
 
 	//apply parameters
-	m_ui->doubleSpinBoxResolution->setValue(resolution);
-	m_ui->doubleSpinBoxMinPlanarity->setValue(minPlanarity);
-	m_ui->doubleSpinBoxRegularization->setValue(regularization);
-	m_ui->spinBoxCutoff->setValue(cutoff);
+	doubleSpinBoxResolution->setValue(resolution);
+	doubleSpinBoxMinPlanarity->setValue(minPlanarity);
+	doubleSpinBoxRegularization->setValue(regularization);
+	spinBoxCutoff->setValue(cutoff);
 }
 
 void qFacets2Dialog::saveParamsToPersistentSettings()
 {
 	QSettings settings("qFacets2");
 	//save parameters
-	settings.setValue("Resolution", m_ui->doubleSpinBoxResolution->value());
-	settings.setValue("MinPlanarity", m_ui->doubleSpinBoxMinPlanarity->value());
-	settings.setValue("Regularization", m_ui->doubleSpinBoxRegularization->value());
-	settings.setValue("Cutoff", m_ui->spinBoxCutoff->value());
+	settings.setValue("Resolution", doubleSpinBoxResolution->value());
+	settings.setValue("MinPlanarity", doubleSpinBoxMinPlanarity->value());
+	settings.setValue("Regularization", doubleSpinBoxRegularization->value());
+	settings.setValue("Cutoff", spinBoxCutoff->value());
 }

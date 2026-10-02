@@ -62,7 +62,7 @@ void qFacets2::doAction()
 		return;
 	}
 
-	qFacets2Dialog dlg( m_app->getMainWindow() );
+	qFacets2Dialog dlg( m_app );
 	if ( !dlg.exec() )
 	{
 		return;

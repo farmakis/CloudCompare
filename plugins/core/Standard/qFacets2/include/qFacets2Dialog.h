@@ -17,21 +17,21 @@
 
 #pragma once
 
-#include <QDialog>
+#include <ui_qFacets2Dialog.h>
 
-namespace Ui
-{
-	class Facets2Dialog;
-}
+//Qt
+#include <QSettings>
+
+class ccMainAppInterface;
 
 //! Dialog for the Facets2 plugin
-class qFacets2Dialog : public QDialog
+class qFacets2Dialog : public QDialog, public Ui::Facets2Dialog
 {
 	Q_OBJECT
 
 public:
-	explicit qFacets2Dialog( QWidget* parent = nullptr );
-	~qFacets2Dialog() override;
+	//! Default constructor
+	explicit qFacets2Dialog( ccMainAppInterface* app );
 
 	double getResolution() const;
 	double getMinPlanarity() const;
@@ -42,5 +42,5 @@ public:
 	void saveParamsToPersistentSettings();
 
 private:
-	Ui::Facets2Dialog* m_ui;
+	ccMainAppInterface* m_app;
 };
