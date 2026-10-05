@@ -63,7 +63,7 @@
 #include <ccGLWindowInterface.h>
 #include <ccRenderingTools.h>
 
-// qCC_pcp
+// qPCP
 #include <Partition.h>
 
 // CCPluginAPI
