@@ -23,13 +23,17 @@
 //qCC_plugins
 #include <ccMainAppInterface.h>
 
-//qCC_pcp
+//qPCP
 #include <Partition.h>
+
+//CCCoreLib
+#include <CloudSamplingTools.h>
 
 //qCC_db
 #include <ccNormalVectors.h>
 #include <ccOctree.h>
 #include <ccPointCloud.h>
+#include <ccPointCloudInterpolator.h>
 #include <ccProgressDialog.h>
 #include <ccScalarField.h>
 
@@ -59,12 +63,12 @@ bool qFacets2Process::Compute(const qFacets2Dialog& dlg,
     const ccHObject::Container& selectedEntities = app->getSelectedEntities();
 
     //check if there is at least one point cloud in the selection
-    ccHObject::Container clouds;
+    std::vector<ccPointCloud*> clouds;
     for ( ccHObject* entity : selectedEntities )
     {
-        if ( entity && entity->isKindOf( CC_TYPES::POINT_CLOUD ) )
+        if ( entity && entity->isA( CC_TYPES::POINT_CLOUD ) )
         {
-            clouds.push_back( entity );
+            clouds.push_back( ccHObjectCaster::ToPointCloud(entity) );
         }
     }
 
@@ -77,137 +81,170 @@ bool qFacets2Process::Compute(const qFacets2Dialog& dlg,
     // get the parameters from the dialog
     double resolution = dlg.getResolution();
     double minPlanarity = dlg.getMinPlanarity();
-    float regularization = static_cast<float>(dlg.getRegularization());
-    int32_t cutoff = dlg.getCutoff();
-    // more parameteres (hard-coded)
-    int32_t knn = 26;
-    float spatialWeight = 0.00001f;
     bool useRGB = false;
 
+    // some parallel cut pursuit params
+	PCP::Parameters params;
+    params.knn           = 26;
+    params.knnRadius     = resolution;
+    params.regularization = dlg.getRegularization();
+    params.spatialWeight = 0.00001f;
+    params.cutoff        = dlg.getCutoff();
+
     ccProgressDialog pDlg(parentWidget);
+    pDlg.setAutoClose(false);
+
+    ccProgressDialog pOctreeDlg(allowDialogs, parentWidget);
+    pOctreeDlg.setAutoClose(false);
 
     //Duration: initialization
 	QElapsedTimer initTimer;
 	initTimer.start();
 
-    for (ccHObject* entity : clouds)
+    for (ccPointCloud* cloud : clouds)
 	{
-        if (entity && entity->isA(CC_TYPES::POINT_CLOUD))
-        {
-            ccPointCloud* pc = static_cast<ccPointCloud*>(entity);
+        //Duration: volume computation
+        QElapsedTimer timer;
+        timer.start();
 
-            ccOctree::Shared theOctree = pc->getOctree();
+        auto cloudName = cloud->getName();
+
+        ccOctree::Shared theOctree = cloud->getOctree();
+        if (!theOctree)
+        {
+            theOctree = cloud->computeOctree(&pOctreeDlg);
             if (!theOctree)
             {
-                ccProgressDialog pOctreeDlg(allowDialogs, parentWidget);
-                theOctree = pc->computeOctree(&pOctreeDlg);
-                if (!theOctree)
-                {
-                    app->dispToConsole(QObject::tr("Couldn't compute octree for cloud '%1'!").arg(pc->getName()), ccMainAppInterface::ERR_CONSOLE_MESSAGE);
-                    break;
-                }
-            }
-            auto pc_sub = CCCoreLib::CloudSamplingTools::resampleCloudSpatially(cloud,
-                                                                            static_cast<PointCoordinateType>(resolution),
-                                                                            CCCoreLib::SFModulationParams(),
-                                                                            theOctree.data(),
-                                                                            &pDlg);
-
-            pc_sub->computeNormalsWithOctree(CCCoreLib::LOCAL_MODEL_TYPES::LS, 
-                                        ccNormalVectors::Orientation::PLUS_Z,
-                                        static_cast<PointCoordinateType>(resolution * RES_FACTOR_NORMALS), 
-                                        &pDlg);
-
-            // we create/activate Facet ID's label scalar field
-            int sfIdx = pc_sub->getScalarFieldIndexByName(FACET_SF_NAME);
-            if (sfIdx < 0)
-            {
-                sfIdx = pc_sub->addScalarField(FACET_SF_NAME);
-            }
-            if (sfIdx < 0)
-            {
-                app->dispToConsole(QObject::tr("Couldn't allocate a new scalar field for computing Facets! Try to free some memory ..."), ccMainAppInterface::ERR_CONSOLE_MESSAGE);
+                app->dispToConsole(QObject::tr("[Facets2] Couldn't compute octree for cloud '%1'!").arg(cloud->getName()), ccMainAppInterface::ERR_CONSOLE_MESSAGE);
                 break;
             }
-            pc_sub->setCurrentScalarField(sfIdx);
+        }
 
-            
-            // some parallel cut pursuit params
-            int32_t            D      = 6; // 3 for XYZ + 3 for Normals (Nx, Ny, Nz)
-            int32_t            N      = static_cast<int32_t>(pc_sub->size());
-            std::vector<float> Y(static_cast<size_t>(N) * static_cast<size_t>(D), 0.0f);
+        auto subsampled = CCCoreLib::CloudSamplingTools::resampleCloudSpatially(cloud,
+                                                                                static_cast<PointCoordinateType>(resolution),
+                                                                                CCCoreLib::CloudSamplingTools::SFModulationParams(false),
+                                                                                theOctree.data(),
+                                                                                &pDlg);
+        if (!subsampled)
+        {
+            app->dispToConsole(QObject::tr("[Facets2] Failed to subsample cloud '%1'!").arg(cloud->getName()), ccMainAppInterface::ERR_CONSOLE_MESSAGE);
+            break;
+        }
 
-            CCVector3 posOffset(0, 0, 0);
-            for (int32_t i = 0; i < N; ++i)
+        ccPointCloud* pc = cloud->partialClone(subsampled);
+        delete subsampled;
+        subsampled = nullptr;
+        if (!pc)
+        {
+            app->dispToConsole(QObject::tr("[Facets2] Not enough memory to subsample cloud '%1'!").arg(cloud->getName()), ccMainAppInterface::ERR_CONSOLE_MESSAGE);
+            break;
+        }
+
+        pc->computeNormalsWithOctree(CCCoreLib::LOCAL_MODEL_TYPES::LS, 
+                                     ccNormalVectors::Orientation::PLUS_Z,
+                                     static_cast<PointCoordinateType>(resolution * RES_FACTOR_NORMALS), 
+                                     &pDlg);
+
+        ccOctree::Shared theSubOctree = pc->getOctree();
+        if (!theSubOctree)
+        {
+            theSubOctree = pc->computeOctree(&pOctreeDlg);
+            if (!theSubOctree)
             {
-                posOffset += *pc_sub->getPoint(i);
+                app->dispToConsole(QObject::tr("[Facets2] Couldn't compute octree for cloud '%1'!").arg(pc->getName()), ccMainAppInterface::ERR_CONSOLE_MESSAGE);
+                break;
             }
-            posOffset /= static_cast<float>(N);
+        }
 
-            for (int32_t i = 0; i < N; ++i)
+        // we create/activate Facet ID's label scalar field
+        int sfIdx = pc->getScalarFieldIndexByName(FACET_SF_NAME);
+        if (sfIdx < 0)
+        {
+            sfIdx = pc->addScalarField(FACET_SF_NAME);
+        }
+        if (sfIdx < 0)
+        {
+            app->dispToConsole(QObject::tr("[Facets2] Couldn't allocate a new scalar field for computing Facets! Try to free some memory ..."), ccMainAppInterface::ERR_CONSOLE_MESSAGE);
+            break;
+        }
+        pc->setCurrentScalarField(sfIdx);
+        
+        // more parallel cut pursuit params
+        int32_t  D      = 6; // 3 for XYZ + 3 for Normals (Nx, Ny, Nz)
+        int32_t  N      = static_cast<int32_t>(pc->size());
+
+        params.D = D;
+		params.N = N;
+		params.Y.assign(static_cast<size_t>(N) * static_cast<size_t>(D), 0.0f);
+		std::vector<float>&  Y = params.Y;
+        std::vector<int32_t> components;
+
+        CCVector3d posOffset(0, 0, 0);
+        for (int32_t i = 0; i < N; ++i)
+        {
+            posOffset += pc->getPoint(i)->toDouble();
+        }
+        posOffset /= static_cast<double>(N);
+
+        for (int32_t i = 0; i < N; ++i)
+        {
+            const CCVector3d P = pc->getPoint(i)->toDouble();
+
+            Y[i * D + 0] = static_cast<float>(P.x - posOffset.x);
+            Y[i * D + 1] = static_cast<float>(P.y - posOffset.y);
+            Y[i * D + 2] = static_cast<float>(P.z - posOffset.z);
+
+            const CCVector3& normal = pc->getPointNormal(i);
+            for (size_t k = 0; k < 3; ++k)
             {
-                const CCVector3* P = pc_sub->getPoint(i);
-
-                Y[i * D + 0] = static_cast<float>(P->x - posOffset.x);
-                Y[i * D + 1] = static_cast<float>(P->y - posOffset.y);
-                Y[i * D + 2] = static_cast<float>(P->z - posOffset.z);
-
-                auto sfIdx->getScalarFieldIndexByName("Nx")
-                ccScalarField::Shared sf    = std::static_pointer_cast<ccScalarField>(pc_sub->getScalarField(sfIdx));
-                float                 value = static_cast<float>(sf->getValue(i));
-
-                auto sfIdx->getScalarFieldIndexByName("Ny")
-                ccScalarField::Shared sf    = std::static_pointer_cast<ccScalarField>(pc_sub->getScalarField(sfIdx));
-                float                 value = static_cast<float>(sf->getValue(i));
-
-                auto sfIdx->getScalarFieldIndexByName("Nz")
-                ccScalarField::Shared sf    = std::static_pointer_cast<ccScalarField>(pc_sub->getScalarField(sfIdx));
-                float                 value = static_cast<float>(sf->getValue(i));
-
-                for (size_t k = 0; k < 3; ++k)
-                {
-                    ccScalarField::Shared sf    = std::static_pointer_cast<ccScalarField>(pc_sub->getScalarField(sfIndices[k]));
-                    float                 value = static_cast<float>(sf->getValue(i));
-
-                    // Sanitize NaN/Inf, force it to 0.0
-                    if (std::isnan(value) || std::isinf(value))
-                    {
-                        value = 0.0f;
-                    }
-                    // Scalar fields start at feature index 3, if RGB is used, they start at feature index 6
-                    Y[i * D + 3 + rgbDim + k] = value;
-                }
+                const float n = normal[k];
+                //scale normals from [-1,1] to [0,1]
+                float value = std::isfinite(n) ? (n + 1.0f) / 2.0f : 0.0f;
+                // Scalar fields start at feature index 3
+                Y[i * D + 3 + k] =value;
             }
+        }
 
-            // we try to label all CCs
-            std::vector<int32_t> components;
-            int                  rV = PCP::Partition::labelCutPursuitComponents(pc_sub,
-                                                                knn,
-                                                                resolution, // knnRadius
-                                                                N,
-                                                                D,
-                                                                Y,
-                                                                regularization,
-                                                                spatialWeight,
-                                                                cutoff,
-                                                                components,
-                                                                &pDlg,
-                                                                theOctree.data());
+        // we try to label all CCs
+        int                  rV = PCP::Partition::labelCutPursuitComponents(pc,
+                                                                            params,
+                                                                            components,
+                                                                            &pDlg,
+                                                                            theSubOctree.data());
 
-            // error handling
-            if (rV < 0)
-            {
-                app->dispToConsole(QObject::tr("[Cut Pursuit] Failed to compute components!"), ccMainAppInterface::ERR_CONSOLE_MESSAGE);
-                return false;
-            }
+        // error handling
+        if (rV < 0)
+        {
+            app->dispToConsole(QObject::tr("[Facets2] Failed to compute components!"), ccMainAppInterface::ERR_CONSOLE_MESSAGE);
+            pc->deleteScalarField(sfIdx);
+            return false;
+        }
 
-            // Assign component index to each point
-            ccScalarField::Shared sf = std::static_pointer_cast<ccScalarField>(pc->getScalarField(sfIdx));
-            for (int32_t i = 0; i < N; ++i)
-            {
-                sf->setValue(i, static_cast<ScalarType>(components[i]));
-            }
-            sf->computeMinAndMax();
+        // Assign component index to each point
+        ccScalarField::Shared sf = pc->getCCScalarField(sfIdx);
+        for (int32_t i = 0; i < N; ++i)
+        {
+            sf->setValue(i, static_cast<ScalarType>(components[i]));
+        }
+        sf->computeMinAndMax();
+
+        //Upadate display
+        cloud->setEnabled(false);
+
+        pc->setName(QObject::tr("%1 (res.:%2 - reg:%2 - cutoff:%5)").arg(cloud->getName()).arg(resolution).arg(params.regularization).arg(params.cutoff));
+        pc->setCurrentDisplayedScalarField(sfIdx);
+        pc->showSF(true);
+        pc->prepareDisplayForRefresh();
+
+        app->addToDB(pc);
+        app->refreshAll();
+
+        qint64 time_ms = timer.elapsed();
+        //we display block volume computation timing only if no error occurred!
+        if (app)
+        {
+            app->dispToConsole(QObject::tr("[Facets2] Detected %1 facets in cloud '%2': %3 s").arg(rV).arg(cloudName).arg(time_ms / 1000.0, 0, 'f', 3),
+                ccMainAppInterface::STD_CONSOLE_MESSAGE);
         }
     }
     
