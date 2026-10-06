@@ -10,7 +10,7 @@ if( PLUGIN_STANDARD_QFACETS2 )
 	AddPlugin( NAME ${PROJECT_NAME} )
 	target_compile_definitions( ${PROJECT_NAME} PRIVATE QT_NO_KEYWORDS )
 
-	target_link_libraries( ${PROJECT_NAME} QCC_PCP_LIB )
+	target_link_libraries( ${PROJECT_NAME} QPCP_LIB )
 
 	add_subdirectory( include )
 	add_subdirectory( src )
