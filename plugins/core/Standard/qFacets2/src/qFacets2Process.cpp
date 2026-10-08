@@ -171,22 +171,20 @@ bool qFacets2Process::Compute(const qFacets2Dialog& dlg,
         
         // more parallel cut pursuit params
         int32_t  D      = 6; // 3 for XYZ + 3 for Normals (Nx, Ny, Nz)
-        int32_t  N      = static_cast<int32_t>(pc->size());
 
         params.D = D;
-		params.N = N;
-		params.Y.assign(static_cast<size_t>(N) * static_cast<size_t>(D), 0.0f);
+		params.Y.assign(static_cast<size_t>(pc->size()) * static_cast<size_t>(D), 0.0f);
 		std::vector<float>&  Y = params.Y;
         std::vector<int32_t> components;
 
         CCVector3d posOffset(0, 0, 0);
-        for (int32_t i = 0; i < N; ++i)
+        for (unsigned i = 0; i < pc->size(); ++i)
         {
             posOffset += pc->getPoint(i)->toDouble();
         }
-        posOffset /= static_cast<double>(N);
+        posOffset /= static_cast<double>(pc->size());
 
-        for (int32_t i = 0; i < N; ++i)
+        for (unsigned i = 0; i < pc->size(); ++i)
         {
             const CCVector3d P = pc->getPoint(i)->toDouble();
 
@@ -195,7 +193,7 @@ bool qFacets2Process::Compute(const qFacets2Dialog& dlg,
             Y[i * D + 2] = static_cast<float>(P.z - posOffset.z);
 
             const CCVector3& normal = pc->getPointNormal(i);
-            for (size_t k = 0; k < 3; ++k)
+            for (unsigned k = 0; k < 3; ++k)
             {
                 const float n = normal[k];
                 //scale normals from [-1,1] to [0,1]
@@ -206,7 +204,7 @@ bool qFacets2Process::Compute(const qFacets2Dialog& dlg,
         }
 
         // we try to label all CCs
-        int                  rV = PCP::Partition::labelCutPursuitComponents(pc,
+        int                  rV = PCP::Partition::LabelCutPursuitComponents(pc,
                                                                             params,
                                                                             components,
                                                                             &pDlg,
@@ -222,7 +220,7 @@ bool qFacets2Process::Compute(const qFacets2Dialog& dlg,
 
         // Assign component index to each point
         ccScalarField::Shared sf = pc->getCCScalarField(sfIdx);
-        for (int32_t i = 0; i < N; ++i)
+        for (unsigned i = 0; i < pc->size(); ++i)
         {
             sf->setValue(i, static_cast<ScalarType>(components[i]));
         }
