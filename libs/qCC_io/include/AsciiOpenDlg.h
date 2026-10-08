@@ -1,3 +1,5 @@
+#pragma once
+
 // ##########################################################################
 // #                                                                        #
 // #                              CLOUDCOMPARE                              #
@@ -15,10 +17,7 @@
 // #                                                                        #
 // ##########################################################################
 
-#ifndef CC_ASCII_OPEN_DIALOG_HEADER
-#define CC_ASCII_OPEN_DIALOG_HEADER
-
-// local
+// Local
 #include "qCC_io.h"
 
 // Qt
@@ -26,7 +25,7 @@
 #include <QDialog>
 #include <QString>
 
-// system
+// System
 #include <vector>
 
 enum CC_ASCII_OPEN_DLG_TYPES
@@ -344,5 +343,3 @@ class QCC_IO_LIB_API AsciiOpenDlg : public QDialog
 
 	unsigned m_columnsCount;
 };
-
-#endif // CC_ASCII_OPEN_DIALOG_HEADER

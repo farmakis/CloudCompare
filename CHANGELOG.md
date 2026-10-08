@@ -148,6 +148,11 @@ New features:
 		- simply splits the screen into two 3D views (left / right)
 	- (the Oculus support has been dropped)
 
+	- New 'Cut pursuit' segmentation algorithm
+		- Tools > Segmentation > Cut pursuit
+		- can be used to segment a cloud into piecewise constant regions, based on one or several scalar field
+		- based on the paper "Parallel Cut Pursuit for Minimization of the Graph Total Variation" (Raguet et al., 2019)
+
 New plugins
 
 	- G3 Point: granulometry made simple in CloudCompare
@@ -472,6 +477,11 @@ Bug fixes:
 	- CC could take a long time to start (and to open a file) if the recent files list contained files on an unreachable network drive.
 		The recent files are now only checked when one of them is clicked (and a missing file is then removed from the list).
 	- the scalar field name above the color scale in the 3D view was not properly updated after renaming the active scalar field
+	- LAS 1.4 files: the extra fields described by an Extra Bytes EVLR (instead of a VLR) were ignored at loading time
+		(a VLR can describe at most 341 extra fields, so files with more fields have to use an EVLR).
+		If a file has both, the VLR is used and a warning is issued.
+	- LAS files: an extra field name of 32 characters (the maximum) was loaded with the field description appended to it
+	- LAS 1.4 files: only the first 341 extra fields could be saved. The others are now saved too, described by an Extra Bytes EVLR.
 
 Unresolved anomalies:
 	- 'LAS.vlrs' meta-data items saved in BIN files with any version prior to 2.14.beta cannot be restored anymore due to Qt 6
