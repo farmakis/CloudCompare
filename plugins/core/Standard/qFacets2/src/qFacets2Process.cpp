@@ -28,8 +28,10 @@
 
 //CCCoreLib
 #include <CloudSamplingTools.h>
+#include <GeometricalAnalysisTools.h>
 
 //qCC_db
+#include <ccBackgroundTask.h>
 #include <ccNormalVectors.h>
 #include <ccOctree.h>
 #include <ccPointCloud.h>
@@ -140,11 +142,6 @@ bool qFacets2Process::Compute(const qFacets2Dialog& dlg,
             break;
         }
 
-        pc->computeNormalsWithOctree(CCCoreLib::LOCAL_MODEL_TYPES::LS, 
-                                     ccNormalVectors::Orientation::PLUS_Z,
-                                     static_cast<PointCoordinateType>(resolution * RES_FACTOR_NORMALS), 
-                                     &pDlg);
-
         ccOctree::Shared theSubOctree = pc->getOctree();
         if (!theSubOctree)
         {
@@ -155,6 +152,18 @@ bool qFacets2Process::Compute(const qFacets2Dialog& dlg,
                 break;
             }
         }
+
+        PointCoordinateType radius = static_cast<PointCoordinateType>(resolution * RES_FACTOR_NORMALS);
+
+        // // only the computation itself runs in a worker thread
+        // CCCoreLib::GeometricalAnalysisTools::ErrorCode result = ccBackgroundTask::Run(
+        //     [&]()
+        //     {
+        //         return CCCoreLib::GeometricalAnalysisTools::ComputePCA( pc,
+        //                                                                 radius,
+        //                                                                 &pDlg,
+        //                                                                 theSubOctree.data() );
+        //     });
 
         // we create/activate Facet ID's label scalar field
         int sfIdx = pc->getScalarFieldIndexByName(FACET_SF_NAME);
@@ -169,81 +178,94 @@ bool qFacets2Process::Compute(const qFacets2Dialog& dlg,
         }
         pc->setCurrentScalarField(sfIdx);
         
-        // more parallel cut pursuit params
-        int32_t  D      = 6; // 3 for XYZ + 3 for Normals (Nx, Ny, Nz)
+    //     // more parallel cut pursuit params
+    //     int32_t  D      = 6; // 3 for XYZ + 3 for Normals (Nx, Ny, Nz)
 
-        params.D = D;
-		params.Y.assign(static_cast<size_t>(pc->size()) * static_cast<size_t>(D), 0.0f);
-		std::vector<float>&  Y = params.Y;
-        std::vector<int32_t> components;
+    //     params.D = D;
+	// 	params.Y.assign(static_cast<size_t>(pc->size()) * static_cast<size_t>(D), 0.0f);
+	// 	std::vector<float>&  Y = params.Y;
+    //     std::vector<int32_t> components;
 
-        CCVector3d posOffset(0, 0, 0);
-        for (unsigned i = 0; i < pc->size(); ++i)
-        {
-            posOffset += pc->getPoint(i)->toDouble();
-        }
-        posOffset /= static_cast<double>(pc->size());
+    //     CCVector3d posOffset(0, 0, 0);
+    //     for (unsigned i = 0; i < pc->size(); ++i)
+    //     {
+    //         posOffset += pc->getPoint(i)->toDouble();
+    //     }
+    //     posOffset /= static_cast<double>(pc->size());
 
-        for (unsigned i = 0; i < pc->size(); ++i)
-        {
-            const CCVector3d P = pc->getPoint(i)->toDouble();
 
-            Y[i * D + 0] = static_cast<float>(P.x - posOffset.x);
-            Y[i * D + 1] = static_cast<float>(P.y - posOffset.y);
-            Y[i * D + 2] = static_cast<float>(P.z - posOffset.z);
+    //     for (unsigned i = 0; i < pc->size(); ++i)
+    //     {
+    //         const CCVector3d P = pc->getPoint(i)->toDouble();
 
-            const CCVector3& normal = pc->getPointNormal(i);
-            for (unsigned k = 0; k < 3; ++k)
-            {
-                const float n = normal[k];
-                //scale normals from [-1,1] to [0,1]
-                float value = std::isfinite(n) ? (n + 1.0f) / 2.0f : 0.0f;
-                // Scalar fields start at feature index 3
-                Y[i * D + 3 + k] =value;
-            }
-        }
+    //         Y[i * D + 0] = static_cast<float>(P.x - posOffset.x);
+    //         Y[i * D + 1] = static_cast<float>(P.y - posOffset.y);
+    //         Y[i * D + 2] = static_cast<float>(P.z - posOffset.z);
 
-        // we try to label all CCs
-        int                  rV = PCP::Partition::LabelCutPursuitComponents(pc,
-                                                                            params,
-                                                                            components,
-                                                                            &pDlg,
-                                                                            theSubOctree.data());
+    //         const CCVector3& normal = pc->getPointNormal(i);
+    //         for (unsigned k = 0; k < 3; ++k)
+    //         {
+    //             const float n = static_cast<float>(eigenValues[k]->getValue(i));
+    //             // const float n = normal[k];
+    //             //scale normals from [-1,1] to [0,1] for not oriented dimensions (Nx and Ny here)
+    //             float value = 0.0f;
+    //             if (std::isfinite(n))
+    //             {
+    //                 if (k < 2) // Nx and Ny
+    //                 {
+    //                     value = (n + 1.0f) / 2.0f;
+    //                 }
+    //                 else // Nz
+    //                 {
+    //                     value = n;
+    //                 }
+    //             }
+    //             // Scalar fields start at feature index 3
+    //             Y[i * D + 3 + k] =value;
+    //         }
+    //     }
 
-        // error handling
-        if (rV < 0)
-        {
-            app->dispToConsole(QObject::tr("[Facets2] Failed to compute components!"), ccMainAppInterface::ERR_CONSOLE_MESSAGE);
-            pc->deleteScalarField(sfIdx);
-            return false;
-        }
+    //     // we try to label all CCs
+    //     int                  rV = PCP::Partition::LabelCutPursuitComponents(pc,
+    //                                                                         params,
+    //                                                                         components,
+    //                                                                         &pDlg,
+    //                                                                         theSubOctree.data());
 
-        // Assign component index to each point
-        ccScalarField::Shared sf = pc->getCCScalarField(sfIdx);
-        for (unsigned i = 0; i < pc->size(); ++i)
-        {
-            sf->setValue(i, static_cast<ScalarType>(components[i]));
-        }
-        sf->computeMinAndMax();
+    //     // error handling
+    //     if (rV < 0)
+    //     {
+    //         app->dispToConsole(QObject::tr("[Facets2] Failed to compute components!"), ccMainAppInterface::ERR_CONSOLE_MESSAGE);
+    //         pc->deleteScalarField(sfIdx);
+    //         return false;
+    //     }
 
-        //Upadate display
-        cloud->setEnabled(false);
+    //     // Assign component index to each point
+    //     ccScalarField::Shared sf = pc->getCCScalarField(sfIdx);
+    //     for (unsigned i = 0; i < pc->size(); ++i)
+    //     {
+    //         sf->setValue(i, static_cast<ScalarType>(components[i]));
+    //     }
+    //     sf->computeMinAndMax();
 
-        pc->setName(QObject::tr("%1 (res.:%2 - reg:%2 - cutoff:%5)").arg(cloud->getName()).arg(resolution).arg(params.regularization).arg(params.cutoff));
-        pc->setCurrentDisplayedScalarField(sfIdx);
-        pc->showSF(true);
-        pc->prepareDisplayForRefresh();
+    //     //Upadate display
+    //     cloud->setEnabled(false);
 
-        app->addToDB(pc);
-        app->refreshAll();
+    //     pc->setName(QObject::tr("%1 (res.:%2 - reg:%2 - cutoff:%5)").arg(cloud->getName()).arg(resolution).arg(params.regularization).arg(params.cutoff));
+    //     pc->setCurrentDisplayedScalarField(sfIdx);
+    //     pc->showSF(true);
+    //     pc->prepareDisplayForRefresh();
 
-        qint64 time_ms = timer.elapsed();
-        //we display block volume computation timing only if no error occurred!
-        if (app)
-        {
-            app->dispToConsole(QObject::tr("[Facets2] Detected %1 facets in cloud '%2': %3 s").arg(rV).arg(cloudName).arg(time_ms / 1000.0, 0, 'f', 3),
-                ccMainAppInterface::STD_CONSOLE_MESSAGE);
-        }
+    //     app->addToDB(pc);
+    //     app->refreshAll();
+
+    //     qint64 time_ms = timer.elapsed();
+    //     //we display block volume computation timing only if no error occurred!
+    //     if (app)
+    //     {
+    //         app->dispToConsole(QObject::tr("[Facets2] Detected %1 facets in cloud '%2': %3 s").arg(rV).arg(cloudName).arg(time_ms / 1000.0, 0, 'f', 3),
+    //             ccMainAppInterface::STD_CONSOLE_MESSAGE);
+    //     }
     }
     
     return true;
