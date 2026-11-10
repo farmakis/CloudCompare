@@ -56,6 +56,6 @@
 [submodule "libs/qPCP"]
 	path = libs/qPCP
 	url = https://github.com/farmakis/qPCP.git
-[submodule "plugins/core/Standard/qOBPA"]
-	path = plugins/core/Standard/qOBPA
-	url = https://github.com/farmakis/qOBPA.git
+[submodule "plugins/core/Standard/qGAE"]
+	path = plugins/core/Standard/qGAE
+	url = https://github.com/farmakis/qGAE.git
