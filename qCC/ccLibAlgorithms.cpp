@@ -190,6 +190,27 @@ namespace ccLibAlgorithms
 		}
 		break;
 
+		case CCCoreLib::GeometricalAnalysisTools::GeomCharacteristic::Normal:
+		{
+			switch (subOption)
+			{
+			case CCCoreLib::Neighbourhood::NormalComponent::NormalX:
+				sfName = "Nx";
+				break;
+			case CCCoreLib::Neighbourhood::NormalComponent::NormalY:
+				sfName = "Ny";
+				break;
+			case CCCoreLib::Neighbourhood::NormalComponent::NormalZ:
+				sfName = "Nz";
+				break;
+			default:
+				assert(false);
+				return {};
+			}
+			sfName += QString(" (%1)").arg(radius);
+		}
+		break;
+
 		case CCCoreLib::GeometricalAnalysisTools::Curvature:
 		{
 			switch (subOption)
